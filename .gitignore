@@ -1,0 +1,40 @@
+# Build artifacts
+/bin/
+/dist/
+*.test
+*.out
+*.prof
+coverage.txt
+coverage.html
+# Stray binaries from `go build ./...`
+/router
+/replay
+/gen-traces
+
+# Go
+vendor/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Models and weights (never commit; large)
+/models/
+*.gguf
+*.bin
+*.safetensors
+
+# Bench raw outputs (commit only summarized results.md)
+/bench/results/
+/bench/out/
+
+# AI assistant scratch (local only)
+CLAUDE.md
+.claude/
+.claude*
+*.claude.md
+.aider*
+.cursor*

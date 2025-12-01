@@ -1,0 +1,71 @@
+# llm-router Makefile
+
+GO              ?= go
+GOFLAGS         ?=
+PKG             ?= ./...
+COVER_PROFILE   ?= coverage.txt
+BIN_DIR         ?= bin
+
+.PHONY: all build test test-race cover lint vet fmt clean \
+        router replay gen-traces up down bench help
+
+all: build
+
+help:
+	@echo "Targets:"
+	@echo "  build       Build all binaries into $(BIN_DIR)/"
+	@echo "  test        Run tests"
+	@echo "  test-race   Run tests with -race"
+	@echo "  cover       Run tests and emit coverage report ($(COVER_PROFILE))"
+	@echo "  lint        Run golangci-lint"
+	@echo "  vet         Run go vet"
+	@echo "  fmt         Run gofmt -s -w on all .go files"
+	@echo "  up          Start local llama.cpp workers (see scripts/up.sh)"
+	@echo "  down        Stop local workers"
+	@echo "  bench       Run benchmark harness against the router"
+	@echo "  replay      Replay a trace against a running router"
+	@echo "  gen-traces  Generate a synthetic trace"
+	@echo "  clean       Remove build artifacts"
+
+build: router replay gen-traces
+
+router:
+	$(GO) build $(GOFLAGS) -o $(BIN_DIR)/router ./cmd/router
+
+replay:
+	$(GO) build $(GOFLAGS) -o $(BIN_DIR)/replay ./cmd/replay
+
+gen-traces:
+	$(GO) build $(GOFLAGS) -o $(BIN_DIR)/gen-traces ./cmd/gen-traces
+
+test:
+	$(GO) test $(GOFLAGS) $(PKG)
+
+test-race:
+	$(GO) test $(GOFLAGS) -race $(PKG)
+
+cover:
+	$(GO) test $(GOFLAGS) -race -covermode=atomic -coverprofile=$(COVER_PROFILE) ./internal/...
+	@echo
+	@$(GO) tool cover -func=$(COVER_PROFILE) | tail -n 1
+
+lint:
+	golangci-lint run
+
+vet:
+	$(GO) vet $(PKG)
+
+fmt:
+	gofmt -s -w .
+
+up:
+	bash scripts/up.sh
+
+down:
+	bash scripts/down.sh
+
+bench:
+	bash bench/scripts/run.sh
+
+clean:
+	rm -rf $(BIN_DIR) $(COVER_PROFILE) coverage.html
