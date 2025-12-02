@@ -1,0 +1,46 @@
+# Default configuration for the prefix-cache aware router.
+#
+# Any field may be overridden via environment variables with the prefix
+# ROUTER_ (e.g. ROUTER_STRATEGY=leastloaded). See internal/config for the
+# full list. Workers are configured from this file only.
+
+server:
+  addr: ":8080"
+  read_timeout: 30s
+  write_timeout: 0s
+  shutdown_timeout: 10s
+
+router:
+  # One of: roundrobin | random | leastloaded | prefixaware
+  strategy: prefixaware
+  # Chars per hashed chunk. 32 is the project default; see
+  # docs/decisions/0006-tokenization-strategy.md for rationale.
+  chunk_size: 32
+  # Minimum number of matching chunks before prefix-aware routing trusts the
+  # match and pins to the matched worker. Below this, fall back to least-loaded.
+  min_match_chunks: 2
+  # If the best-prefix worker has at least this many in-flight requests, the
+  # safety valve spills the request to the next-best match (or least-loaded).
+  saturation_inflight: 8
+
+workers:
+  - id: w0
+    url: http://127.0.0.1:8001
+    # KV cache budget in chunks. With chunk_size=32 chars and ~4 chars/token,
+    # 8192 chunks is a rough analogue of ~64k tokens of context history.
+    kv_budget: 8192
+    max_inflight: 16
+    timeout: 120s
+  - id: w1
+    url: http://127.0.0.1:8002
+    kv_budget: 8192
+    max_inflight: 16
+    timeout: 120s
+
+logging:
+  level: info
+  format: text
+
+metrics:
+  enabled: true
+  addr: ":9090"
