@@ -17,6 +17,7 @@
 package prefixtree
 
 import (
+	"container/list"
 	"sync"
 	"sync/atomic"
 )
@@ -27,12 +28,17 @@ type Tree struct {
 
 	root *node
 
-	chunks int // total chunks across all edges; protected by mu
+	chunks    int // total chunks across all edges; protected by mu
+	maxChunks int // 0 disables eviction
+
+	// LRU of terminal nodes; front = newest, back = oldest. Protected by mu.
+	lru *list.List
 
 	// Aggregate counters for diagnostics; not used in routing decisions.
 	// Atomics so LongestMatch can update queries while holding only RLock.
 	inserts atomic.Uint64
 	queries atomic.Uint64
+	evicted atomic.Uint64
 }
 
 type node struct {
@@ -40,31 +46,45 @@ type node struct {
 	children map[uint64]*node
 	parent   *node
 	terminal bool
+	// lruElem points to the LRU list element holding this node, when terminal.
+	lruElem *list.Element
 }
 
-// NewTree returns an empty tree.
-func NewTree() *Tree {
+// NewTree returns an empty tree with the given chunk budget. A budget of zero
+// (or negative; values are clamped to zero) disables eviction.
+func NewTree(maxChunks int) *Tree {
+	if maxChunks < 0 {
+		maxChunks = 0
+	}
 	return &Tree{
-		root: &node{children: map[uint64]*node{}},
+		root:      &node{children: map[uint64]*node{}},
+		maxChunks: maxChunks,
+		lru:       list.New(),
 	}
 }
 
 // Stats describes a tree's current state. It is a snapshot.
 type Stats struct {
-	Chunks  int    // total chunks across all edges
-	Inserts uint64 // cumulative inserts
-	Queries uint64 // cumulative LongestMatch calls
+	Chunks    int    // total chunks across all edges
+	Terminals int    // number of distinct terminal nodes
+	MaxChunks int    // configured budget (0 = unlimited)
+	Inserts   uint64 // cumulative inserts
+	Queries   uint64 // cumulative LongestMatch calls
+	Evicted   uint64 // cumulative evicted terminals
 }
 
 // Stats returns a snapshot of the tree's counters.
 func (t *Tree) Stats() Stats {
 	t.mu.RLock()
-	chunks := t.chunks
+	chunks, terms, max := t.chunks, t.lru.Len(), t.maxChunks
 	t.mu.RUnlock()
 	return Stats{
-		Chunks:  chunks,
-		Inserts: t.inserts.Load(),
-		Queries: t.queries.Load(),
+		Chunks:    chunks,
+		Terminals: terms,
+		MaxChunks: max,
+		Inserts:   t.inserts.Load(),
+		Queries:   t.queries.Load(),
+		Evicted:   t.evicted.Load(),
 	}
 }
 
@@ -127,7 +147,8 @@ func (t *Tree) Insert(seq []uint64) {
 			}
 			cur.children[seq[i]] = n
 			t.chunks += len(n.edge)
-			n.terminal = true
+			t.markTerminal(n)
+			t.evictUntilFits()
 			return
 		}
 
@@ -151,7 +172,8 @@ func (t *Tree) Insert(seq []uint64) {
 
 		i += common
 		if i == len(seq) {
-			split.terminal = true
+			t.markTerminal(split)
+			t.evictUntilFits()
 			return
 		}
 		tail := append([]uint64(nil), seq[i:]...)
@@ -159,14 +181,16 @@ func (t *Tree) Insert(seq []uint64) {
 			edge:     tail,
 			children: map[uint64]*node{},
 			parent:   split,
-			terminal: true,
 		}
 		split.children[tail[0]] = sib
 		t.chunks += len(tail)
+		t.markTerminal(sib)
+		t.evictUntilFits()
 		return
 	}
 	// Sequence fully matches an existing path.
-	cur.terminal = true
+	t.markTerminal(cur)
+	t.evictUntilFits()
 }
 
 // commonPrefix returns the length of the longest shared prefix between two

@@ -16,7 +16,7 @@ func h(xs ...int) []uint64 {
 }
 
 func TestTree_EmptySequence(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(0)
 	tr.Insert(h())
 	if got := tr.LongestMatch(h()); got != 0 {
 		t.Errorf("LongestMatch on empty = %d, want 0", got)
@@ -27,7 +27,7 @@ func TestTree_EmptySequence(t *testing.T) {
 }
 
 func TestTree_SingleInsertAndMatch(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(0)
 	tr.Insert(h(1, 2, 3, 4))
 
 	tests := []struct {
@@ -56,7 +56,7 @@ func TestTree_SingleInsertAndMatch(t *testing.T) {
 }
 
 func TestTree_SharedPrefixThenDivergeSplitsEdge(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(0)
 	tr.Insert(h(1, 2, 3, 4))
 	tr.Insert(h(1, 2, 5, 6))
 
@@ -77,7 +77,7 @@ func TestTree_SharedPrefixThenDivergeSplitsEdge(t *testing.T) {
 
 func TestTree_InsertWhereSeqEndsAtSplit(t *testing.T) {
 	// Existing edge is [1,2,3,4]; new prompt is exactly [1,2].
-	tr := NewTree()
+	tr := NewTree(0)
 	tr.Insert(h(1, 2, 3, 4))
 	tr.Insert(h(1, 2))
 
@@ -93,7 +93,7 @@ func TestTree_InsertWhereSeqEndsAtSplit(t *testing.T) {
 }
 
 func TestTree_InsertExtendsExistingTerminal(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(0)
 	tr.Insert(h(1, 2))
 	tr.Insert(h(1, 2, 3, 4))
 
@@ -109,7 +109,7 @@ func TestTree_InsertExtendsExistingTerminal(t *testing.T) {
 }
 
 func TestTree_DuplicateInsertIsIdempotent(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(0)
 	tr.Insert(h(1, 2, 3))
 	tr.Insert(h(1, 2, 3))
 	if tr.Len() != 3 {
@@ -121,7 +121,7 @@ func TestTree_DuplicateInsertIsIdempotent(t *testing.T) {
 }
 
 func TestTree_BranchingTreeStatsCount(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(0)
 	tr.Insert(h(1, 2))
 	tr.Insert(h(1, 3))
 	tr.Insert(h(4, 5, 6))
@@ -143,7 +143,7 @@ func TestTree_BranchingTreeStatsCount(t *testing.T) {
 }
 
 func TestTree_Concurrent_ReadersAndWriters(t *testing.T) {
-	tr := NewTree()
+	tr := NewTree(0)
 	// Pre-populate.
 	for i := 0; i < 256; i++ {
 		seq := h(i, i+1, i+2)
