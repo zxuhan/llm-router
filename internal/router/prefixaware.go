@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"sort"
 
 	"github.com/xzhou/llm-router/internal/backend"
 	"github.com/xzhou/llm-router/internal/prefixtree"
@@ -13,14 +14,18 @@ import (
 // worker with the longest match, falling back to least-loaded when no worker
 // has at least MinMatchChunks shared chunks.
 //
-// The safety valve (spill on saturation) is layered on top in a follow-up
-// change; see WithSafetyValve.
+// PrefixAware also implements a safety valve: if the worker with the longest
+// match is at or above SaturationInflight outstanding requests, the router
+// spills to the next-best worker whose match still meets MinMatchChunks and
+// is below saturation, falling back to LeastLoaded only when no suitable
+// alternative exists.
 type PrefixAware struct {
 	base
-	chunker        Chunker
-	minMatchChunks int
-	fallback       Router
-	trees          map[string]*prefixtree.Tree
+	chunker            Chunker
+	minMatchChunks     int
+	saturationInflight int
+	fallback           Router
+	trees              map[string]*prefixtree.Tree
 }
 
 // PrefixAwareOptions configures a PrefixAware router.
@@ -31,8 +36,13 @@ type PrefixAwareOptions struct {
 	// to a particular worker. Below this, the router falls back to the
 	// configured Fallback (default: LeastLoaded over the same backends).
 	MinMatchChunks int
+	// SaturationInflight is the in-flight count at or above which a worker is
+	// considered saturated. The safety valve then spills to the next-best
+	// match. A value of zero disables the safety valve (always pin to best).
+	SaturationInflight int
 	// Fallback is the router consulted when no worker meets the match
-	// threshold. Defaults to NewLeastLoaded(backends) if nil.
+	// threshold or all best-prefix workers are saturated. Defaults to
+	// NewLeastLoaded(backends).
 	Fallback Router
 }
 
@@ -53,16 +63,25 @@ func NewPrefixAware(backends []backend.Backend, opts PrefixAwareOptions) *Prefix
 		trees[b.ID()] = prefixtree.NewTree(b.KVBudget())
 	}
 	return &PrefixAware{
-		base:           newBase(backends),
-		chunker:        chunker,
-		minMatchChunks: opts.MinMatchChunks,
-		fallback:       fb,
-		trees:          trees,
+		base:               newBase(backends),
+		chunker:            chunker,
+		minMatchChunks:     opts.MinMatchChunks,
+		saturationInflight: opts.SaturationInflight,
+		fallback:           fb,
+		trees:              trees,
 	}
 }
 
 // Name implements Router.
 func (*PrefixAware) Name() string { return "prefixaware" }
+
+// candidate captures one backend's view of the routing decision: how much of
+// the prompt it already holds and how loaded it currently is.
+type candidate struct {
+	idx     int
+	match   int
+	inflight int64
+}
 
 // Choose implements Router.
 func (p *PrefixAware) Choose(ctx context.Context, prompt string) (Decision, error) {
@@ -71,31 +90,66 @@ func (p *PrefixAware) Choose(ctx context.Context, prompt string) (Decision, erro
 	}
 	chunks := p.chunker(prompt)
 
-	// Walk every backend's tree and remember the longest match.
-	bestIdx := 0
-	bestMatch := p.trees[p.backends[0].ID()].LongestMatch(chunks)
-	for i := 1; i < len(p.backends); i++ {
-		m := p.trees[p.backends[i].ID()].LongestMatch(chunks)
-		if m > bestMatch {
-			bestMatch = m
-			bestIdx = i
+	// Snapshot every backend's match length and current inflight.
+	cands := make([]candidate, len(p.backends))
+	for i, b := range p.backends {
+		cands[i] = candidate{
+			idx:      i,
+			match:    p.trees[b.ID()].LongestMatch(chunks),
+			inflight: b.Inflight(),
 		}
 	}
+	// Sort by (match desc, inflight asc, idx asc) so the result is stable.
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].match != cands[j].match {
+			return cands[i].match > cands[j].match
+		}
+		if cands[i].inflight != cands[j].inflight {
+			return cands[i].inflight < cands[j].inflight
+		}
+		return cands[i].idx < cands[j].idx
+	})
 
-	if bestMatch < p.minMatchChunks {
+	best := cands[0]
+	if best.match < p.minMatchChunks {
+		// Threshold not met: defer to the fallback router.
 		d, err := p.fallback.Choose(ctx, prompt)
 		if err != nil {
 			return Decision{}, err
 		}
-		// Tag the decision so observers can see why we landed here.
 		d.Reason = "fallback-" + d.Reason
-		d.MatchChunks = bestMatch
+		d.MatchChunks = best.match
+		return d, nil
+	}
+
+	// Safety valve: if the best worker is saturated, spill to the next-best
+	// match that is also above threshold and not saturated.
+	if p.saturationInflight > 0 && best.inflight >= int64(p.saturationInflight) {
+		for _, c := range cands[1:] {
+			if c.match < p.minMatchChunks {
+				break // remaining candidates have even shorter match
+			}
+			if c.inflight < int64(p.saturationInflight) {
+				return Decision{
+					Backend:     p.backends[c.idx],
+					MatchChunks: c.match,
+					Reason:      "spilled-from-saturated",
+				}, nil
+			}
+		}
+		// No suitable alternative; spill to least-loaded.
+		d, err := p.fallback.Choose(ctx, prompt)
+		if err != nil {
+			return Decision{}, err
+		}
+		d.Reason = "spilled-fallback-" + d.Reason
+		d.MatchChunks = best.match
 		return d, nil
 	}
 
 	return Decision{
-		Backend:     p.backends[bestIdx],
-		MatchChunks: bestMatch,
+		Backend:     p.backends[best.idx],
+		MatchChunks: best.match,
 		Reason:      "longest-prefix",
 	}, nil
 }
