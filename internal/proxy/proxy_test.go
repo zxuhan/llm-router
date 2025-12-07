@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/xzhou/llm-router/internal/backend"
 	"github.com/xzhou/llm-router/internal/router"
@@ -294,9 +296,15 @@ func TestDefaultExtractor_BadJSON(t *testing.T) {
 func TestStreamResponse_IgnoresFlusherWhenAbsent(t *testing.T) {
 	// Use bytes.Buffer (no Flush) wrapped in a tiny http.ResponseWriter.
 	rec := &nonFlushRecorder{buf: &bytes.Buffer{}}
-	streamResponse(rec, strings.NewReader("hello"))
+	bytesOut, ttft := streamResponse(rec, strings.NewReader("hello"), time.Now())
 	if rec.buf.String() != "hello" {
 		t.Errorf("stream wrote %q", rec.buf.String())
+	}
+	if bytesOut != 5 {
+		t.Errorf("bytes out = %d, want 5", bytesOut)
+	}
+	if ttft <= 0 {
+		t.Errorf("ttft = %v, want > 0", ttft)
 	}
 }
 
@@ -346,5 +354,96 @@ func TestProxy_CustomExtractor(t *testing.T) {
 	defer resp.Body.Close()
 	if !called {
 		t.Error("custom extractor not invoked")
+	}
+}
+
+func TestProxy_RecorderObservesSuccessfulRequest(t *testing.T) {
+	a := backend.NewFakeServer(backend.FakeServerOptions{
+		TTFT: 5 * time.Millisecond,
+		Chunks: []string{
+			`{"choices":[{"delta":{"content":"hi"}}]}`,
+			`{"choices":[{"delta":{"content":" there"}}]}`,
+		},
+	})
+	defer a.Close()
+	bb, _ := a.Backend("a", 0)
+
+	var (
+		mu    sync.Mutex
+		seen  []RequestStats
+	)
+	rec := func(s RequestStats) {
+		mu.Lock()
+		seen = append(seen, s)
+		mu.Unlock()
+	}
+	h, err := New(Options{
+		Router:   router.NewRoundRobin([]backend.Backend{bb}),
+		Logger:   log.New(io.Discard, "", 0),
+		Recorder: rec,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json",
+		strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("recorder fired %d times, want 1", len(seen))
+	}
+	st := seen[0]
+	if st.BackendID != "a" {
+		t.Errorf("BackendID = %q", st.BackendID)
+	}
+	if st.Strategy != "roundrobin" {
+		t.Errorf("Strategy = %q", st.Strategy)
+	}
+	if st.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d", st.StatusCode)
+	}
+	if st.TTFT < 5*time.Millisecond {
+		t.Errorf("TTFT = %v, want >= 5ms (server delay)", st.TTFT)
+	}
+	if st.Total <= st.TTFT {
+		t.Errorf("Total (%v) should be >= TTFT (%v)", st.Total, st.TTFT)
+	}
+	if st.BytesOut == 0 {
+		t.Errorf("BytesOut = 0")
+	}
+	if st.Err != "" {
+		t.Errorf("Err = %q, want empty", st.Err)
+	}
+}
+
+func TestProxy_RecorderObservesFailedRoute(t *testing.T) {
+	var seen RequestStats
+	h, err := New(Options{
+		Router:   router.NewRoundRobin(nil),
+		Logger:   log.New(io.Discard, "", 0),
+		Recorder: func(s RequestStats) { seen = s },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	resp, _ := http.Post(srv.URL+"/v1/chat/completions", "application/json",
+		strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`))
+	resp.Body.Close()
+	if seen.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("StatusCode = %d", seen.StatusCode)
+	}
+	if seen.Err == "" {
+		t.Errorf("Err should be set on failed route")
 	}
 }

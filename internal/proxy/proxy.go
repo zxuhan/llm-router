@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/xzhou/llm-router/internal/backend"
 	"github.com/xzhou/llm-router/internal/router"
@@ -25,12 +26,32 @@ import (
 // matters, so any deterministic concatenation of message fields works.
 type PromptExtractor func(body []byte) (string, error)
 
+// RequestStats summarises one proxied request. The Recorder hook receives one
+// RequestStats per request, regardless of success or failure. It is the wiring
+// point for metrics, structured logs, and any other observer.
+type RequestStats struct {
+	BackendID   string        // chosen backend id (empty if route failed)
+	Strategy    string        // router name
+	Reason      string        // routing reason ("longest-prefix", "fallback-...")
+	MatchChunks int           // prefix chunks the chosen backend already held
+	StatusCode  int           // upstream status (0 if dispatch failed before headers)
+	TTFT        time.Duration // time to first response byte (0 if never reached)
+	Total       time.Duration // wall time from request entry to response close
+	BytesOut    int64         // bytes streamed back to the client
+	Err         string        // non-empty on failure
+}
+
+// Recorder is a callback invoked once per request. Implementations must be
+// non-blocking; the handler does not bound how many goroutines call into it.
+type Recorder func(RequestStats)
+
 // Handler is the HTTP handler that proxies chat completions through the
 // configured Router and Backend(s).
 type Handler struct {
 	router    router.Router
 	extractor PromptExtractor
 	logger    *log.Logger
+	recorder  Recorder
 }
 
 // Options configures the Handler.
@@ -42,6 +63,9 @@ type Options struct {
 	Extractor PromptExtractor
 	// Logger is an optional logger for non-fatal events. Defaults to log.Default().
 	Logger *log.Logger
+	// Recorder is invoked with a RequestStats summary at the end of every
+	// request. Defaults to a no-op.
+	Recorder Recorder
 }
 
 // New constructs a Handler.
@@ -57,37 +81,61 @@ func New(opts Options) (*Handler, error) {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &Handler{router: opts.Router, extractor: ext, logger: logger}, nil
+	rec := opts.Recorder
+	if rec == nil {
+		rec = func(RequestStats) {}
+	}
+	return &Handler{router: opts.Router, extractor: ext, logger: logger, recorder: rec}, nil
 }
 
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	stats := RequestStats{Strategy: h.router.Name()}
+	defer func() {
+		stats.Total = time.Since(start)
+		h.recorder(stats)
+	}()
+
 	if r.URL.Path != "/v1/chat/completions" {
 		http.NotFound(w, r)
+		stats.StatusCode = http.StatusNotFound
+		stats.Err = "not found"
 		return
 	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		stats.StatusCode = http.StatusMethodNotAllowed
+		stats.Err = "method not allowed"
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		stats.StatusCode = http.StatusBadRequest
+		stats.Err = "read body: " + err.Error()
 		return
 	}
 	prompt, err := h.extractor(body)
 	if err != nil {
 		http.Error(w, "parse body: "+err.Error(), http.StatusBadRequest)
+		stats.StatusCode = http.StatusBadRequest
+		stats.Err = "parse body: " + err.Error()
 		return
 	}
 
 	decision, err := h.router.Choose(r.Context(), prompt)
 	if err != nil {
 		http.Error(w, "route: "+err.Error(), http.StatusServiceUnavailable)
+		stats.StatusCode = http.StatusServiceUnavailable
+		stats.Err = "route: " + err.Error()
 		return
 	}
+	stats.BackendID = decision.Backend.ID()
+	stats.Reason = decision.Reason
+	stats.MatchChunks = decision.MatchChunks
 
 	// Update the router's per-worker prefix tree before dispatch so that
 	// near-simultaneous requests with the same prefix can pin to the same
@@ -108,6 +156,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "upstream: "+err.Error(), http.StatusBadGateway)
 		h.logger.Printf("upstream error: backend=%s err=%v", decision.Backend.ID(), err)
+		stats.StatusCode = http.StatusBadGateway
+		stats.Err = "upstream: " + err.Error()
 		return
 	}
 	defer resp.Body.Close()
@@ -125,27 +175,38 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Router-Backend", decision.Backend.ID())
 	w.Header().Set("X-Router-Reason", decision.Reason)
 	w.WriteHeader(resp.StatusCode)
+	stats.StatusCode = resp.StatusCode
 
-	streamResponse(w, resp.Body)
+	bytes, ttft := streamResponse(w, resp.Body, start)
+	stats.BytesOut = bytes
+	stats.TTFT = ttft
 }
 
 // streamResponse copies r into w with periodic flushes so SSE chunks reach
-// the client without sitting in the response buffer.
-func streamResponse(w http.ResponseWriter, r io.Reader) {
+// the client without sitting in the response buffer. It also reports the
+// time-to-first-byte (relative to start) and the total bytes written.
+func streamResponse(w http.ResponseWriter, r io.Reader, start time.Time) (int64, time.Duration) {
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 4096)
+	var total int64
+	var ttft time.Duration
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
-			if _, werr := w.Write(buf[:n]); werr != nil {
-				return
+			if ttft == 0 {
+				ttft = time.Since(start)
+			}
+			written, werr := w.Write(buf[:n])
+			total += int64(written)
+			if werr != nil {
+				return total, ttft
 			}
 			if flusher != nil {
 				flusher.Flush()
 			}
 		}
 		if err != nil {
-			return
+			return total, ttft
 		}
 	}
 }
