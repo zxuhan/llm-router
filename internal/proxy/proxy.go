@@ -9,6 +9,8 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -30,6 +32,7 @@ type PromptExtractor func(body []byte) (string, error)
 // RequestStats per request, regardless of success or failure. It is the wiring
 // point for metrics, structured logs, and any other observer.
 type RequestStats struct {
+	RequestID   string        // request correlation id (echoed in X-Request-ID)
 	BackendID   string        // chosen backend id (empty if route failed)
 	Strategy    string        // router name
 	Reason      string        // routing reason ("longest-prefix", "fallback-...")
@@ -52,6 +55,7 @@ type Handler struct {
 	extractor PromptExtractor
 	logger    *log.Logger
 	recorder  Recorder
+	idgen     func() string
 }
 
 // Options configures the Handler.
@@ -66,6 +70,10 @@ type Options struct {
 	// Recorder is invoked with a RequestStats summary at the end of every
 	// request. Defaults to a no-op.
 	Recorder Recorder
+	// IDGenerator overrides the request-id generator. Defaults to a
+	// crypto/rand-backed 16-hex-char generator. Tests inject a deterministic
+	// generator.
+	IDGenerator func() string
 }
 
 // New constructs a Handler.
@@ -85,13 +93,41 @@ func New(opts Options) (*Handler, error) {
 	if rec == nil {
 		rec = func(RequestStats) {}
 	}
-	return &Handler{router: opts.Router, extractor: ext, logger: logger, recorder: rec}, nil
+	idgen := opts.IDGenerator
+	if idgen == nil {
+		idgen = defaultRequestID
+	}
+	return &Handler{
+		router:    opts.Router,
+		extractor: ext,
+		logger:    logger,
+		recorder:  rec,
+		idgen:     idgen,
+	}, nil
+}
+
+// defaultRequestID returns a 16-hex-char id from crypto/rand. Falls back to a
+// fixed sentinel if the system RNG fails (effectively never on darwin/linux).
+func defaultRequestID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "no-rng"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	stats := RequestStats{Strategy: h.router.Name()}
+	reqID := r.Header.Get("X-Request-ID")
+	if reqID == "" {
+		reqID = h.idgen()
+	}
+	w.Header().Set("X-Request-ID", reqID)
+	stats := RequestStats{
+		RequestID: reqID,
+		Strategy:  h.router.Name(),
+	}
 	defer func() {
 		stats.Total = time.Since(start)
 		h.recorder(stats)
