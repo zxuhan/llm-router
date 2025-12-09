@@ -178,16 +178,18 @@ func ReadJSONL(r io.Reader) (Trace, error) {
 
 // Stats summarises a trace's gross shape; useful in reports.
 type Stats struct {
-	Requests          int
-	Sessions          int
-	UniqueSysPrompts  int
-	MaxDelay          time.Duration
-	MeanContentChars  int
-	PatternHistogram  map[string]int
+	Requests         int
+	Sessions         int
+	UniqueSysPrompts int
+	MaxDelay         time.Duration
+	MeanContentChars int
+	PatternHistogram map[string]int
 }
 
-// Summarise computes Stats over a trace.
-func Summarise(t Trace) Stats {
+// Shape computes Stats describing the gross structure of a trace (request
+// count, session count, prompt sizes). It is unrelated to the result-level
+// Summarise function in report.go.
+func Shape(t Trace) Stats {
 	st := Stats{PatternHistogram: map[string]int{}}
 	st.Requests = len(t.Requests)
 	sessions := map[string]struct{}{}

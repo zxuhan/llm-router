@@ -114,9 +114,9 @@ func TestReadJSONL_BadInput(t *testing.T) {
 	}
 }
 
-func TestSummarise_BasicShape(t *testing.T) {
+func TestShape_BasicShape(t *testing.T) {
 	tr := Generate(Default())
-	st := Summarise(tr)
+	st := Shape(tr)
 	if st.Requests != len(tr.Requests) {
 		t.Errorf("Requests = %d", st.Requests)
 	}
@@ -165,8 +165,8 @@ func TestMakeRandomString_Reproducible(t *testing.T) {
 	}
 }
 
-func TestSummarise_TimeFieldFormat(t *testing.T) {
-	st := Summarise(Generate(Default()))
+func TestShape_TimeFieldFormat(t *testing.T) {
+	st := Shape(Generate(Default()))
 	if st.MaxDelay > time.Hour {
 		t.Errorf("MaxDelay surprisingly large: %v", st.MaxDelay)
 	}

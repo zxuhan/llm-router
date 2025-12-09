@@ -69,7 +69,7 @@ func run(args []string, stdout, stderr *os.File) error {
 	}
 
 	if *summary {
-		st := trace.Summarise(tr)
+		st := trace.Shape(tr)
 		fmt.Fprintf(stderr,
 			"trace: %d requests across %d sessions; max delay %v; mean prompt len %d chars\n",
 			st.Requests, st.Sessions, st.MaxDelay, st.MeanContentChars)
