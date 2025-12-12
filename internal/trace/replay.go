@@ -135,7 +135,7 @@ func (r *Replayer) fire(ctx context.Context, client *http.Client, req Request, i
 		res.CompletedAt = time.Now()
 		return res
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	res.StatusCode = resp.StatusCode
 	res.BackendID = resp.Header.Get("X-Router-Backend")

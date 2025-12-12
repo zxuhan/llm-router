@@ -78,8 +78,8 @@ func (*PrefixAware) Name() string { return "prefixaware" }
 // candidate captures one backend's view of the routing decision: how much of
 // the prompt it already holds and how loaded it currently is.
 type candidate struct {
-	idx     int
-	match   int
+	idx      int
+	match    int
 	inflight int64
 }
 

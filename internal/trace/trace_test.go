@@ -39,11 +39,11 @@ func TestGenerate_DifferentSeedsProduceDifferentTraces(t *testing.T) {
 
 func TestGenerate_ZeroAndNegativeKnobsCoerced(t *testing.T) {
 	opts := Options{
-		Sessions:        0,
-		TurnsPerSession: 0,
-		UserTurnLen:     0,
-		SharedSystemLen: 0,
-		Seed:            0,
+		Sessions:             0,
+		TurnsPerSession:      0,
+		UserTurnLen:          0,
+		SharedSystemLen:      0,
+		Seed:                 0,
 		SessionStartJitterMs: 1,
 	}
 	tr := Generate(opts)

@@ -40,7 +40,7 @@ func makeStreamingHandler(content string) http.HandlerFunc {
 
 // fixture builds three fake backends behind the real proxy + the requested
 // router strategy.
-func fixture(t *testing.T, strat func([]backend.Backend) router.Router) (string, []backend.Backend, *httptest.Server) {
+func fixture(t *testing.T, build func([]backend.Backend) router.Router) (string, []backend.Backend, *httptest.Server) {
 	t.Helper()
 	servers := []*backend.FakeServer{
 		backend.NewFakeServer(backend.FakeServerOptions{Handler: makeStreamingHandler("from a")}),
@@ -60,7 +60,7 @@ func fixture(t *testing.T, strat func([]backend.Backend) router.Router) (string,
 		}
 		backends[i] = b
 	}
-	r := strat(backends)
+	r := build(backends)
 	h, err := proxy.New(proxy.Options{
 		Router: r,
 		Logger: log.New(io.Discard, "", 0),

@@ -369,8 +369,8 @@ func TestProxy_RecorderObservesSuccessfulRequest(t *testing.T) {
 	bb, _ := a.Backend("a", 0)
 
 	var (
-		mu    sync.Mutex
-		seen  []RequestStats
+		mu   sync.Mutex
+		seen []RequestStats
 	)
 	rec := func(s RequestStats) {
 		mu.Lock()

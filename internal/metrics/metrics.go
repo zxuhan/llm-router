@@ -29,12 +29,12 @@ import (
 type Registry struct {
 	registry *prometheus.Registry
 
-	requestsTotal     *prometheus.CounterVec
-	bytesOutTotal     *prometheus.CounterVec
-	requestDuration   *prometheus.HistogramVec
-	timeToFirstByte   *prometheus.HistogramVec
-	matchChunks       *prometheus.HistogramVec
-	cacheHitRequests  *prometheus.CounterVec
+	requestsTotal    *prometheus.CounterVec
+	bytesOutTotal    *prometheus.CounterVec
+	requestDuration  *prometheus.HistogramVec
+	timeToFirstByte  *prometheus.HistogramVec
+	matchChunks      *prometheus.HistogramVec
+	cacheHitRequests *prometheus.CounterVec
 }
 
 // New returns a fresh Registry. It does not install Go process collectors;
@@ -174,12 +174,12 @@ func emptyAs(s, fallback string) string {
 type treeCollector struct {
 	provider PrefixTreeProvider
 
-	chunks      *prometheus.Desc
-	terminals   *prometheus.Desc
-	maxChunks   *prometheus.Desc
-	insertsT    *prometheus.Desc
-	queriesT    *prometheus.Desc
-	evictionsT  *prometheus.Desc
+	chunks     *prometheus.Desc
+	terminals  *prometheus.Desc
+	maxChunks  *prometheus.Desc
+	insertsT   *prometheus.Desc
+	queriesT   *prometheus.Desc
+	evictionsT *prometheus.Desc
 }
 
 func newTreeCollector(p PrefixTreeProvider) *treeCollector {

@@ -48,16 +48,16 @@ type Trace struct {
 
 // Options configure the synthetic generator.
 type Options struct {
-	Seed             int64   // 0 uses a fixed default for reproducibility
-	Sessions         int     // distinct conversation sessions
-	TurnsPerSession  int     // turns per session (assistant + user pair = 1 turn)
-	SharedSystemLen  int     // characters of shared system prompt
-	UserTurnLen      int     // characters of each user message
-	ToolLoopProb     float64 // probability that a turn is a tool-call expansion
-	CodeContextLen   int     // size in chars of the code-edit context block
-	CodeSessionShare float64 // fraction of sessions that use the code-edit pattern
-	SessionStartJitterMs int  // random offset between session start times
-	TurnGapMs        int      // mean gap between turns in a session
+	Seed                 int64   // 0 uses a fixed default for reproducibility
+	Sessions             int     // distinct conversation sessions
+	TurnsPerSession      int     // turns per session (assistant + user pair = 1 turn)
+	SharedSystemLen      int     // characters of shared system prompt
+	UserTurnLen          int     // characters of each user message
+	ToolLoopProb         float64 // probability that a turn is a tool-call expansion
+	CodeContextLen       int     // size in chars of the code-edit context block
+	CodeSessionShare     float64 // fraction of sessions that use the code-edit pattern
+	SessionStartJitterMs int     // random offset between session start times
+	TurnGapMs            int     // mean gap between turns in a session
 }
 
 // Default returns a sensible Options for a 3-4 second trace.

@@ -1,0 +1,44 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unconvert
+    - unused
+
+  settings:
+    staticcheck:
+      checks:
+        # Default checks plus a few extras worth keeping noisy.
+        - all
+        # Exclude SA1019 because we may legitimately reference deprecated stdlib
+        # APIs in test fixtures (e.g., httptest details).
+        - "-SA1019"
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+      # Generated docs/test fakes pull in stdlib pieces we don't always use.
+      - path: cmd/router/main\.go
+        text: "Error return value"
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

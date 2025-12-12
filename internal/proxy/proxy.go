@@ -196,7 +196,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		stats.Err = "upstream: " + err.Error()
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Copy upstream headers (excluding hop-by-hop) and status.
 	for k, vs := range resp.Header {

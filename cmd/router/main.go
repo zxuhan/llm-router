@@ -218,4 +218,3 @@ func serveUntilSignal(logger *slog.Logger, shutdownTimeout time.Duration, server
 		return nil
 	}
 }
-

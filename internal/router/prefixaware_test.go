@@ -151,7 +151,8 @@ func TestPrefixAware_FallbackErrorIsPropagated(t *testing.T) {
 // errFallback is a Router that always returns ErrNoBackends.
 type errFallback struct{}
 
-func (errFallback) Name() string                                     { return "err" }
-func (errFallback) Choose(context.Context, string) (Decision, error) { return Decision{}, ErrNoBackends }
-func (errFallback) Update(string, backend.Backend)                   {}
-
+func (errFallback) Name() string { return "err" }
+func (errFallback) Choose(context.Context, string) (Decision, error) {
+	return Decision{}, ErrNoBackends
+}
+func (errFallback) Update(string, backend.Backend) {}

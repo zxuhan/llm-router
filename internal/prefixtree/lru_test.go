@@ -43,7 +43,7 @@ func TestEviction_SinglePromptOverBudget(t *testing.T) {
 }
 
 func TestEviction_OldestTerminalEvictedFirst(t *testing.T) {
-	tr := NewTree(8) // budget 8 chunks
+	tr := NewTree(8)         // budget 8 chunks
 	tr.Insert(h(1, 2, 3, 4)) // 4 chunks; LRU back: A
 	tr.Insert(h(5, 6, 7, 8)) // +4 chunks; total 8; LRU back: A, front: B
 
@@ -68,8 +68,8 @@ func TestEviction_OldestTerminalEvictedFirst(t *testing.T) {
 
 func TestEviction_TouchPromotesToNewest(t *testing.T) {
 	tr := NewTree(8)
-	tr.Insert(h(1, 2, 3, 4))            // A
-	tr.Insert(h(5, 6, 7, 8))            // B
+	tr.Insert(h(1, 2, 3, 4)) // A
+	tr.Insert(h(5, 6, 7, 8)) // B
 	// Re-insert A: should promote A to newest.
 	tr.Insert(h(1, 2, 3, 4))
 	// Now insert C (3 chunks) forcing eviction; B is oldest, should go.

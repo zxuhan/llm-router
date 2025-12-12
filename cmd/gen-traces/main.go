@@ -61,7 +61,7 @@ func run(args []string, stdout, stderr *os.File) error {
 		if err != nil {
 			return fmt.Errorf("open output: %w", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		w = f
 	}
 	if err := trace.WriteJSONL(tr, w); err != nil {
@@ -70,14 +70,14 @@ func run(args []string, stdout, stderr *os.File) error {
 
 	if *summary {
 		st := trace.Shape(tr)
-		fmt.Fprintf(stderr,
+		_, _ = fmt.Fprintf(stderr,
 			"trace: %d requests across %d sessions; max delay %v; mean prompt len %d chars\n",
 			st.Requests, st.Sessions, st.MaxDelay, st.MeanContentChars)
-		fmt.Fprintf(stderr, "patterns: ")
+		_, _ = fmt.Fprintf(stderr, "patterns: ")
 		for k, v := range st.PatternHistogram {
-			fmt.Fprintf(stderr, "%s=%d ", k, v)
+			_, _ = fmt.Fprintf(stderr, "%s=%d ", k, v)
 		}
-		fmt.Fprintln(stderr)
+		_, _ = fmt.Fprintln(stderr)
 	}
 	return nil
 }

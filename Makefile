@@ -7,7 +7,7 @@ COVER_PROFILE   ?= coverage.txt
 BIN_DIR         ?= bin
 
 .PHONY: all build test test-race cover lint vet fmt clean \
-        router replay gen-traces up down bench help
+        router replay gen-traces bench-bin up down bench help
 
 all: build
 
@@ -27,7 +27,7 @@ help:
 	@echo "  gen-traces  Generate a synthetic trace"
 	@echo "  clean       Remove build artifacts"
 
-build: router replay gen-traces
+build: router replay gen-traces bench-bin
 
 router:
 	$(GO) build $(GOFLAGS) -o $(BIN_DIR)/router ./cmd/router
@@ -37,6 +37,9 @@ replay:
 
 gen-traces:
 	$(GO) build $(GOFLAGS) -o $(BIN_DIR)/gen-traces ./cmd/gen-traces
+
+bench-bin:
+	$(GO) build $(GOFLAGS) -o $(BIN_DIR)/bench ./cmd/bench
 
 test:
 	$(GO) test $(GOFLAGS) $(PKG)

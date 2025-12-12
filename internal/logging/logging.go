@@ -7,6 +7,7 @@
 package logging
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -88,9 +89,9 @@ func AccessLogRecorder(logger *slog.Logger) proxy.Recorder {
 		}
 		if s.Err != "" {
 			attrs = append(attrs, slog.String("err", s.Err))
-			logger.LogAttrs(nil, slog.LevelError, "request failed", attrs...)
+			logger.LogAttrs(context.Background(), slog.LevelError, "request failed", attrs...)
 			return
 		}
-		logger.LogAttrs(nil, slog.LevelInfo, "request completed", attrs...)
+		logger.LogAttrs(context.Background(), slog.LevelInfo, "request completed", attrs...)
 	}
 }

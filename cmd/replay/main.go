@@ -48,7 +48,7 @@ func run(args []string, stdout, stderr *os.File) error {
 		return fmt.Errorf("open trace: %w", err)
 	}
 	tr, err := trace.ReadJSONL(f)
-	f.Close()
+	_ = f.Close()
 	if err != nil {
 		return fmt.Errorf("parse trace: %w", err)
 	}
@@ -70,7 +70,7 @@ func run(args []string, stdout, stderr *os.File) error {
 		if err != nil {
 			return fmt.Errorf("open output: %w", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		w = f
 	}
 	enc := json.NewEncoder(w)

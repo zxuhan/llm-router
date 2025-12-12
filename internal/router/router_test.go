@@ -24,11 +24,11 @@ func newFakeBackend(id string) *fakeBackend {
 	return &fakeBackend{id: id, url: "http://" + id, kvBudget: 1024}
 }
 
-func (f *fakeBackend) ID() string     { return f.id }
-func (f *fakeBackend) URL() string    { return f.url }
-func (f *fakeBackend) KVBudget() int  { return f.kvBudget }
+func (f *fakeBackend) ID() string      { return f.id }
+func (f *fakeBackend) URL() string     { return f.url }
+func (f *fakeBackend) KVBudget() int   { return f.kvBudget }
 func (f *fakeBackend) Inflight() int64 { return f.inflight.Load() }
-func (f *fakeBackend) Acquire()       { f.inflight.Add(1) }
+func (f *fakeBackend) Acquire()        { f.inflight.Add(1) }
 func (f *fakeBackend) Release() {
 	for {
 		v := f.inflight.Load()

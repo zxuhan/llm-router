@@ -142,12 +142,12 @@ func (f *FakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			if i > 0 && f.interChunk > 0 {
 				time.Sleep(f.interChunk)
 			}
-			fmt.Fprintf(w, "data: %s\n\n", c)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", c)
 			if flusher != nil {
 				flusher.Flush()
 			}
 		}
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		if flusher != nil {
 			flusher.Flush()
 		}
@@ -180,4 +180,3 @@ func defaultChatCompletion() map[string]any {
 		"usage": map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
 	}
 }
-

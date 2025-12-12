@@ -20,18 +20,18 @@ type Percentiles struct {
 // Summary aggregates one strategy's run. All durations are wall-clock measured
 // at the replayer (i.e. as the client experiences them).
 type Summary struct {
-	Strategy        string      `json:"strategy"`
-	Requests        int         `json:"requests"`
-	Successful      int         `json:"successful"`
-	Errors          int         `json:"errors"`
-	HitRequests     int         `json:"hit_requests"`
-	HitRate         float64     `json:"hit_rate"`
+	Strategy        string         `json:"strategy"`
+	Requests        int            `json:"requests"`
+	Successful      int            `json:"successful"`
+	Errors          int            `json:"errors"`
+	HitRequests     int            `json:"hit_requests"`
+	HitRate         float64        `json:"hit_rate"`
 	BackendCounts   map[string]int `json:"backend_counts"`
-	TTFT            Percentiles `json:"ttft"`
-	Total           Percentiles `json:"total"`
-	ThroughputRPS   float64     `json:"throughput_rps"`
-	WallTimeSeconds float64     `json:"wall_time_seconds"`
-	BytesIn         int64       `json:"bytes_in"`
+	TTFT            Percentiles    `json:"ttft"`
+	Total           Percentiles    `json:"total"`
+	ThroughputRPS   float64        `json:"throughput_rps"`
+	WallTimeSeconds float64        `json:"wall_time_seconds"`
+	BytesIn         int64          `json:"bytes_in"`
 }
 
 // Summarise computes a Summary over the given results. A request is counted
@@ -139,20 +139,15 @@ func WriteJSON(summaries []Summary, w io.Writer) error {
 
 // WriteMarkdown emits a human-readable comparison report.
 func WriteMarkdown(summaries []Summary, w io.Writer) error {
-	if _, err := fmt.Fprintln(w, "# LLM Router Benchmark Report"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "## Strategy comparison"); err != nil {
-		return err
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "| Strategy | Requests | Errors | Hit rate | TTFT p50 | TTFT p95 | TTFT p99 | Total p50 | Total p95 | RPS |")
-	fmt.Fprintln(w, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	bw := &errWriter{w: w}
+	bw.line("# LLM Router Benchmark Report")
+	bw.line("")
+	bw.line("## Strategy comparison")
+	bw.line("")
+	bw.line("| Strategy | Requests | Errors | Hit rate | TTFT p50 | TTFT p95 | TTFT p99 | Total p50 | Total p95 | RPS |")
+	bw.line("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 	for _, s := range summaries {
-		fmt.Fprintf(w, "| %s | %d | %d | %.2f%% | %s | %s | %s | %s | %s | %.2f |\n",
+		bw.linef("| %s | %d | %d | %.2f%% | %s | %s | %s | %s | %s | %.2f |",
 			s.Strategy,
 			s.Requests,
 			s.Errors,
@@ -165,32 +160,53 @@ func WriteMarkdown(summaries []Summary, w io.Writer) error {
 			s.ThroughputRPS,
 		)
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "## Backend distribution")
-	fmt.Fprintln(w)
+	bw.line("")
+	bw.line("## Backend distribution")
+	bw.line("")
 	for _, s := range summaries {
-		fmt.Fprintf(w, "### %s\n\n", s.Strategy)
-		// Stable order per strategy.
+		bw.linef("### %s", s.Strategy)
+		bw.line("")
 		ids := make([]string, 0, len(s.BackendCounts))
 		for id := range s.BackendCounts {
 			ids = append(ids, id)
 		}
 		sort.Strings(ids)
 		for _, id := range ids {
-			fmt.Fprintf(w, "- %s: %d\n", id, s.BackendCounts[id])
+			bw.linef("- %s: %d", id, s.BackendCounts[id])
 		}
-		fmt.Fprintln(w)
+		bw.line("")
 	}
-	fmt.Fprintln(w, "## Notes")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "- Hit rate is the fraction of successful requests for which the router")
-	fmt.Fprintln(w, "  reported a prefix-driven decision (longest-prefix or spilled-from-saturated).")
-	fmt.Fprintln(w, "  Non-prefix strategies always report 0% by construction.")
-	fmt.Fprintln(w, "- TTFT is wall-clock from request start to first received byte at the")
-	fmt.Fprintln(w, "  replayer; it includes router overhead.")
-	fmt.Fprintln(w, "- RPS is computed as successful requests divided by the wall-clock window")
-	fmt.Fprintln(w, "  between the first started and last completed request.")
-	return nil
+	bw.line("## Notes")
+	bw.line("")
+	bw.line("- Hit rate is the fraction of successful requests for which the router")
+	bw.line("  reported a prefix-driven decision (longest-prefix or spilled-from-saturated).")
+	bw.line("  Non-prefix strategies always report 0% by construction.")
+	bw.line("- TTFT is wall-clock from request start to first received byte at the")
+	bw.line("  replayer; it includes router overhead.")
+	bw.line("- RPS is computed as successful requests divided by the wall-clock window")
+	bw.line("  between the first started and last completed request.")
+	return bw.err
+}
+
+// errWriter is a tiny adapter that captures the first write error so loops can
+// emit many lines without a noisy error check on every call.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) line(s string) {
+	if e.err != nil {
+		return
+	}
+	_, e.err = fmt.Fprintln(e.w, s)
+}
+
+func (e *errWriter) linef(format string, args ...any) {
+	if e.err != nil {
+		return
+	}
+	_, e.err = fmt.Fprintf(e.w, format+"\n", args...)
 }
 
 // fmtDur formats a duration with a suitable unit for short benchmarks. Returns

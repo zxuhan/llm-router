@@ -29,8 +29,8 @@ const (
 	StrategyPrefixAware Strategy = "prefixaware"
 )
 
-// allStrategies is exported for callers that want to enumerate valid options
-// (CLI help text, generated docs, etc.).
+// AllStrategies enumerates the supported routing strategies in their canonical
+// order. Used for CLI help text, generated docs, and validation messages.
 func AllStrategies() []Strategy {
 	return []Strategy{
 		StrategyRoundRobin,
@@ -60,18 +60,18 @@ type ServerConfig struct {
 // RouterConfig configures the routing strategy and its tunables.
 type RouterConfig struct {
 	Strategy           Strategy `yaml:"strategy"`
-	ChunkSize          int      `yaml:"chunk_size"`           // chars per hashed chunk
-	MinMatchChunks     int      `yaml:"min_match_chunks"`     // threshold for prefix-aware
-	SaturationInflight int      `yaml:"saturation_inflight"`  // safety-valve threshold
+	ChunkSize          int      `yaml:"chunk_size"`          // chars per hashed chunk
+	MinMatchChunks     int      `yaml:"min_match_chunks"`    // threshold for prefix-aware
+	SaturationInflight int      `yaml:"saturation_inflight"` // safety-valve threshold
 }
 
 // WorkerConfig describes a single backend worker.
 type WorkerConfig struct {
 	ID          string        `yaml:"id"`
 	URL         string        `yaml:"url"`
-	KVBudget    int           `yaml:"kv_budget"`     // approx tokens (chunks) per worker
-	MaxInflight int           `yaml:"max_inflight"`  // 0 disables the cap
-	Timeout     time.Duration `yaml:"timeout"`       // upstream request timeout
+	KVBudget    int           `yaml:"kv_budget"`    // approx tokens (chunks) per worker
+	MaxInflight int           `yaml:"max_inflight"` // 0 disables the cap
+	Timeout     time.Duration `yaml:"timeout"`      // upstream request timeout
 }
 
 // LoggingConfig configures the structured logger.
