@@ -1,0 +1,92 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  vet:
+    name: vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go mod tidy check
+        run: |
+          go mod tidy
+          if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
+            echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally."
+            git diff go.mod go.sum
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.1.6
+          args: --timeout 5m
+
+  test:
+    name: test (race + coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build
+        run: make build
+      - name: test
+        run: |
+          go test -race -covermode=atomic \
+            -coverprofile=coverage.txt \
+            -coverpkg=./internal/...,./cmd/... \
+            ./...
+      - name: coverage summary
+        run: go tool cover -func=coverage.txt | tail -n 20
+      - name: coverage threshold
+        run: |
+          total=$(go tool cover -func=coverage.txt | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "total coverage: ${total}%"
+          awk -v c="$total" 'BEGIN { if (c+0 < 90.0) { exit 1 } }'
+      - name: upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.txt
+
+  fuzz-smoke:
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: prefix-tree fuzz (short)
+        run: |
+          go test -run=^$ -fuzz=FuzzTree_LongestMatchAgainstReference -fuzztime=20s ./internal/prefixtree
+          go test -run=^$ -fuzz=FuzzTree_InsertOrderInvariance -fuzztime=20s ./internal/prefixtree
+          go test -run=^$ -fuzz=FuzzTree_EvictionKeepsBudget -fuzztime=20s ./internal/prefixtree
