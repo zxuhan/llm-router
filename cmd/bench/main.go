@@ -20,6 +20,7 @@ import (
 	"log"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,8 +52,11 @@ func run(args []string, stderr io.Writer) error {
 	chunkSize := fs.Int("chunk-size", 32, "prefix-aware chunk size")
 	minMatch := fs.Int("min-match-chunks", 2, "prefix-aware match threshold")
 	saturate := fs.Int("saturation-inflight", 8, "prefix-aware safety-valve threshold")
-	backendDelay := fs.Duration("backend-ttft", 8*time.Millisecond, "simulated upstream TTFT")
-	backendCount := fs.Int("backends", 3, "number of fake backends")
+	backendDelay := fs.Duration("backend-ttft", 8*time.Millisecond, "simulated upstream TTFT (fake-backend mode only)")
+	backendCount := fs.Int("backends", 3, "number of fake backends (fake-backend mode only)")
+	realBackends := fs.String("real", "", "comma-separated real backend URLs; when set, runs against real upstreams instead of fakes")
+	maxTokens := fs.Int("max-tokens", 32, "max_tokens to request from real upstreams (keeps the run short)")
+	onlyStrategy := fs.String("strategy", "", "only run this strategy (one of: roundrobin, random, leastloaded, prefixaware); empty runs all four")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -70,6 +74,14 @@ func run(args []string, stderr io.Writer) error {
 		SessionStartJitterMs: 200,
 		TurnGapMs:            40,
 	})
+	// In real-backend mode we want non-streaming responses so we can parse
+	// the OpenAI-style `usage.prompt_tokens_details.cached_tokens` field.
+	if *realBackends != "" {
+		for i := range tr.Requests {
+			tr.Requests[i].Body.Stream = false
+			tr.Requests[i].Body.MaxTokens = *maxTokens
+		}
+	}
 	shape := trace.Shape(tr)
 	_, _ = fmt.Fprintf(stderr, "trace: %d requests, %d sessions, mean prompt %d chars, max delay %v\n",
 		shape.Requests, shape.Sessions, shape.MeanContentChars, shape.MaxDelay)
@@ -91,17 +103,27 @@ func run(args []string, stderr io.Writer) error {
 		}},
 	}
 
+	realURLs := splitCSV(*realBackends)
 	summaries := make([]trace.Summary, 0, len(strategies))
 	for _, st := range strategies {
+		if *onlyStrategy != "" && st.name != *onlyStrategy {
+			continue
+		}
 		_, _ = fmt.Fprintf(stderr, "running %s...\n", st.name)
-		results, err := runStrategy(st.name, st.make, tr, *backendCount, *backendDelay)
+		var results []trace.Result
+		var err error
+		if len(realURLs) > 0 {
+			results, err = runStrategyReal(st.name, st.make, tr, realURLs)
+		} else {
+			results, err = runStrategy(st.name, st.make, tr, *backendCount, *backendDelay)
+		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", st.name, err)
 		}
 		s := trace.Summarise(st.name, results)
 		summaries = append(summaries, s)
-		_, _ = fmt.Fprintf(stderr, "  %s: hit=%5.2f%%  ttft p50=%s p95=%s  rps=%.1f\n",
-			st.name, s.HitRate*100, fmtDur(s.TTFT.P50), fmtDur(s.TTFT.P95), s.ThroughputRPS)
+		_, _ = fmt.Fprintf(stderr, "  %s: hit=%5.2f%%  cache=%5.2f%%  ttft p50=%s p95=%s  rps=%.1f\n",
+			st.name, s.HitRate*100, s.CacheTokenRate*100, fmtDur(s.TTFT.P50), fmtDur(s.TTFT.P95), s.ThroughputRPS)
 	}
 
 	if *jsonPath != "" {
@@ -155,6 +177,58 @@ func runStrategy(name string, build func([]backend.Backend) router.Router, tr tr
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	return rep.Replay(ctx, tr)
+}
+
+// runStrategyReal runs the same in-process pipeline (router + proxy) but with
+// real LlamaCpp backends instead of fakes. Each strategy uses the same backend
+// URL list; the router lives in this process via httptest, so there is no
+// long-running OS-level router to coordinate.
+func runStrategyReal(name string, build func([]backend.Backend) router.Router, tr trace.Trace, urls []string) ([]trace.Result, error) {
+	backends := make([]backend.Backend, len(urls))
+	for i, u := range urls {
+		bb, err := backend.NewLlamaCpp(backend.LlamaCppOptions{
+			ID:       fmt.Sprintf("w%d", i),
+			URL:      u,
+			KVBudget: 1 << 16,
+			Timeout:  60 * time.Second,
+		})
+		if err != nil {
+			return nil, err
+		}
+		backends[i] = bb
+	}
+
+	r := build(backends)
+	h, err := proxy.New(proxy.Options{
+		Router: r,
+		Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		return nil, err
+	}
+	frontend := httptest.NewServer(h)
+	defer frontend.Close()
+
+	rep := &trace.Replayer{Endpoint: frontend.URL + "/v1/chat/completions"}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return rep.Replay(ctx, tr)
+}
+
+// splitCSV trims and skips empty entries from a comma-separated string.
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func closeAll(srvs []*backend.FakeServer) {

@@ -29,6 +29,41 @@ func TestSummarise_EmptyResults(t *testing.T) {
 	}
 }
 
+func TestSummarise_CacheTokenRate(t *testing.T) {
+	now := time.Now()
+	results := []Result{
+		{BackendID: "a", StartedAt: now, CompletedAt: now.Add(time.Millisecond), TTFT: time.Millisecond, Total: time.Millisecond,
+			PromptTokens: 100, CachedTokens: 80},
+		{BackendID: "a", StartedAt: now, CompletedAt: now.Add(time.Millisecond), TTFT: time.Millisecond, Total: time.Millisecond,
+			PromptTokens: 200, CachedTokens: 100},
+	}
+	s := Summarise("any", results)
+	if s.PromptTokens != 300 || s.CachedTokens != 180 {
+		t.Errorf("PromptTokens=%d CachedTokens=%d", s.PromptTokens, s.CachedTokens)
+	}
+	if s.CacheTokenRate < 0.59 || s.CacheTokenRate > 0.61 {
+		t.Errorf("CacheTokenRate = %v, want ~0.6", s.CacheTokenRate)
+	}
+}
+
+func TestWriteMarkdown_ShowsCacheRateWhenAvailable(t *testing.T) {
+	now := time.Now()
+	summaries := []Summary{
+		Summarise("real", []Result{
+			{BackendID: "a", Reason: "longest-prefix", StartedAt: now,
+				CompletedAt: now.Add(time.Millisecond), TTFT: time.Millisecond, Total: time.Millisecond,
+				PromptTokens: 100, CachedTokens: 80},
+		}),
+	}
+	var buf bytes.Buffer
+	if err := WriteMarkdown(summaries, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "80.00%") {
+		t.Errorf("expected cache rate 80%% in markdown, got:\n%s", buf.String())
+	}
+}
+
 func TestSummarise_HitRateAndDistribution(t *testing.T) {
 	results := []Result{
 		makeResult("a", "longest-prefix", 1*time.Millisecond, 10*time.Millisecond),

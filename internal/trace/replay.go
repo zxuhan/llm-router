@@ -13,19 +13,27 @@ import (
 )
 
 // Result captures the outcome of replaying one trace request.
+//
+// PromptTokens and CachedTokens are populated only when the upstream returns a
+// non-streaming JSON response with an OpenAI-style `usage` object that
+// includes `prompt_tokens_details.cached_tokens`. llama.cpp's HTTP server
+// surfaces this; other backends may not. Streaming responses leave these at
+// zero.
 type Result struct {
-	SessionID   string        `json:"session_id"`
-	Pattern     string        `json:"pattern"`
-	Index       int           `json:"index"`
-	StartedAt   time.Time     `json:"started_at"`
-	CompletedAt time.Time     `json:"completed_at"`
-	StatusCode  int           `json:"status_code"`
-	TTFT        time.Duration `json:"ttft"`
-	Total       time.Duration `json:"total"`
-	BytesIn     int64         `json:"bytes_in"`
-	BackendID   string        `json:"backend_id"`
-	Reason      string        `json:"reason"`
-	Err         string        `json:"err,omitempty"`
+	SessionID    string        `json:"session_id"`
+	Pattern      string        `json:"pattern"`
+	Index        int           `json:"index"`
+	StartedAt    time.Time     `json:"started_at"`
+	CompletedAt  time.Time     `json:"completed_at"`
+	StatusCode   int           `json:"status_code"`
+	TTFT         time.Duration `json:"ttft"`
+	Total        time.Duration `json:"total"`
+	BytesIn      int64         `json:"bytes_in"`
+	BackendID    string        `json:"backend_id"`
+	Reason       string        `json:"reason"`
+	PromptTokens int           `json:"prompt_tokens,omitempty"`
+	CachedTokens int           `json:"cached_tokens,omitempty"`
+	Err          string        `json:"err,omitempty"`
 }
 
 // Replayer fires a Trace at a router endpoint with realistic timing. Sessions
@@ -142,6 +150,14 @@ func (r *Replayer) fire(ctx context.Context, client *http.Client, req Request, i
 	res.Reason = resp.Header.Get("X-Router-Reason")
 
 	// Streaming read: record TTFT on the first non-zero read and the byte total.
+	// We also keep the body in a local buffer when the upstream is JSON, so we
+	// can parse OpenAI-style `usage` afterwards. Streaming bodies (SSE) skip
+	// this buffering to avoid OOMing on long generations.
+	parseUsage := isJSONContentType(resp.Header.Get("Content-Type"))
+	var bodyBuf []byte
+	if parseUsage {
+		bodyBuf = make([]byte, 0, 1024)
+	}
 	buf := make([]byte, 4096)
 	for {
 		n, rerr := resp.Body.Read(buf)
@@ -150,6 +166,9 @@ func (r *Replayer) fire(ctx context.Context, client *http.Client, req Request, i
 				res.TTFT = time.Since(res.StartedAt)
 			}
 			res.BytesIn += int64(n)
+			if parseUsage && len(bodyBuf) < 64*1024 {
+				bodyBuf = append(bodyBuf, buf[:n]...)
+			}
 		}
 		if rerr != nil {
 			if rerr != io.EOF {
@@ -158,9 +177,41 @@ func (r *Replayer) fire(ctx context.Context, client *http.Client, req Request, i
 			break
 		}
 	}
+	if parseUsage && len(bodyBuf) > 0 {
+		pt, ct := parseOpenAIUsage(bodyBuf)
+		res.PromptTokens = pt
+		res.CachedTokens = ct
+	}
 	res.CompletedAt = time.Now()
 	res.Total = res.CompletedAt.Sub(res.StartedAt)
 	return res
+}
+
+// isJSONContentType returns true for any Content-Type whose media type is
+// application/json (ignoring parameters). Used to gate body buffering.
+func isJSONContentType(ct string) bool {
+	// Cheap: the only forms we expect are "application/json" and
+	// "application/json; charset=utf-8", so a substring check is sufficient.
+	return len(ct) >= 16 && ct[:16] == "application/json"
+}
+
+// parseOpenAIUsage extracts (prompt_tokens, cached_tokens) from an OpenAI
+// chat-completion JSON body. Returns (0, 0) if any field is absent. Errors
+// during parsing are silently swallowed - we do not want to fail a whole bench
+// run because one upstream response was malformed.
+func parseOpenAIUsage(body []byte) (int, int) {
+	var doc struct {
+		Usage struct {
+			PromptTokens        int `json:"prompt_tokens"`
+			PromptTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return 0, 0
+	}
+	return doc.Usage.PromptTokens, doc.Usage.PromptTokensDetails.CachedTokens
 }
 
 // defaultReplayTransport returns an http.Transport tuned for keeping a steady

@@ -187,6 +187,85 @@ func TestReplayer_BadEndpointURL(t *testing.T) {
 	}
 }
 
+func TestReplayer_ParsesUpstreamCachedTokens(t *testing.T) {
+	// JSON upstream returning OpenAI-style usage with cached_tokens. The
+	// replayer should populate Result.PromptTokens / CachedTokens.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+		  "usage": {
+		    "prompt_tokens": 100,
+		    "prompt_tokens_details": {"cached_tokens": 75}
+		  },
+		  "choices": [{"message": {"role":"assistant","content":"ok"}}]
+		}`))
+	}))
+	defer srv.Close()
+	r := &Replayer{Endpoint: srv.URL}
+	tr := Trace{Requests: []Request{{SessionID: "s", DelayMs: 0, Body: Body{}}}}
+	res, err := r.Replay(context.Background(), tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res[0].PromptTokens != 100 || res[0].CachedTokens != 75 {
+		t.Errorf("PromptTokens=%d CachedTokens=%d, want 100/75", res[0].PromptTokens, res[0].CachedTokens)
+	}
+}
+
+func TestReplayer_NonJSONUpstreamLeavesUsageZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: hello\n\ndata: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+	r := &Replayer{Endpoint: srv.URL}
+	tr := Trace{Requests: []Request{{SessionID: "s", DelayMs: 0, Body: Body{}}}}
+	res, _ := r.Replay(context.Background(), tr)
+	if res[0].PromptTokens != 0 || res[0].CachedTokens != 0 {
+		t.Errorf("expected usage zero for streaming response; got %d/%d", res[0].PromptTokens, res[0].CachedTokens)
+	}
+}
+
+func TestReplayer_MalformedJSONUsageIsSwallowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`not really json`))
+	}))
+	defer srv.Close()
+	r := &Replayer{Endpoint: srv.URL}
+	tr := Trace{Requests: []Request{{SessionID: "s", DelayMs: 0, Body: Body{}}}}
+	res, err := r.Replay(context.Background(), tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Body is not parseable, but the request still succeeded - usage is just zero.
+	if res[0].StatusCode != 200 || res[0].PromptTokens != 0 || res[0].CachedTokens != 0 {
+		t.Errorf("unexpected: %+v", res[0])
+	}
+}
+
+func TestIsJSONContentType(t *testing.T) {
+	cases := []struct {
+		ct   string
+		want bool
+	}{
+		{"application/json", true},
+		{"application/json; charset=utf-8", true},
+		{"text/event-stream", false},
+		{"text/plain", false},
+		{"", false},
+		{"applicat", false},
+	}
+	for _, c := range cases {
+		if got := isJSONContentType(c.ct); got != c.want {
+			t.Errorf("isJSONContentType(%q) = %v, want %v", c.ct, got, c.want)
+		}
+	}
+}
+
 // ensure errors.Is path types stay imported (lint defence).
 var _ = errors.New
 var _ = io.EOF

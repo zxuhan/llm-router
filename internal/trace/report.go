@@ -32,6 +32,13 @@ type Summary struct {
 	ThroughputRPS   float64        `json:"throughput_rps"`
 	WallTimeSeconds float64        `json:"wall_time_seconds"`
 	BytesIn         int64          `json:"bytes_in"`
+	// PromptTokens and CachedTokens are summed across requests when the
+	// upstream returns OpenAI-style usage. CacheTokenRate is
+	// CachedTokens/PromptTokens. Zero indicates either no usage data or no
+	// hits.
+	PromptTokens   int     `json:"prompt_tokens"`
+	CachedTokens   int     `json:"cached_tokens"`
+	CacheTokenRate float64 `json:"cache_token_rate"`
 }
 
 // Summarise computes a Summary over the given results. A request is counted
@@ -58,6 +65,8 @@ func Summarise(strategy string, results []Result) Summary {
 		}
 		s.Successful++
 		s.BytesIn += r.BytesIn
+		s.PromptTokens += r.PromptTokens
+		s.CachedTokens += r.CachedTokens
 		if r.BackendID != "" {
 			s.BackendCounts[r.BackendID]++
 		}
@@ -79,6 +88,9 @@ func Summarise(strategy string, results []Result) Summary {
 	}
 	if s.Successful > 0 {
 		s.HitRate = float64(s.HitRequests) / float64(s.Successful)
+	}
+	if s.PromptTokens > 0 {
+		s.CacheTokenRate = float64(s.CachedTokens) / float64(s.PromptTokens)
 	}
 	s.TTFT = computePercentiles(ttftSamples)
 	s.Total = computePercentiles(totalSamples)
@@ -144,14 +156,19 @@ func WriteMarkdown(summaries []Summary, w io.Writer) error {
 	bw.line("")
 	bw.line("## Strategy comparison")
 	bw.line("")
-	bw.line("| Strategy | Requests | Errors | Hit rate | TTFT p50 | TTFT p95 | TTFT p99 | Total p50 | Total p95 | RPS |")
-	bw.line("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	bw.line("| Strategy | Requests | Errors | Hit rate | KV cached | TTFT p50 | TTFT p95 | TTFT p99 | Total p50 | Total p95 | RPS |")
+	bw.line("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
 	for _, s := range summaries {
-		bw.linef("| %s | %d | %d | %.2f%% | %s | %s | %s | %s | %s | %.2f |",
+		cacheRate := "-"
+		if s.PromptTokens > 0 {
+			cacheRate = fmt.Sprintf("%.2f%%", s.CacheTokenRate*100)
+		}
+		bw.linef("| %s | %d | %d | %.2f%% | %s | %s | %s | %s | %s | %s | %.2f |",
 			s.Strategy,
 			s.Requests,
 			s.Errors,
 			s.HitRate*100,
+			cacheRate,
 			fmtDur(s.TTFT.P50),
 			fmtDur(s.TTFT.P95),
 			fmtDur(s.TTFT.P99),
@@ -181,6 +198,9 @@ func WriteMarkdown(summaries []Summary, w io.Writer) error {
 	bw.line("- Hit rate is the fraction of successful requests for which the router")
 	bw.line("  reported a prefix-driven decision (longest-prefix or spilled-from-saturated).")
 	bw.line("  Non-prefix strategies always report 0% by construction.")
+	bw.line("- KV cached is the upstream-reported cached_tokens / prompt_tokens, summed")
+	bw.line("  across requests. \"-\" means the upstream did not return usage data (e.g.")
+	bw.line("  streaming SSE responses, or a fake backend).")
 	bw.line("- TTFT is wall-clock from request start to first received byte at the")
 	bw.line("  replayer; it includes router overhead.")
 	bw.line("- RPS is computed as successful requests divided by the wall-clock window")

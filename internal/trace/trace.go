@@ -27,9 +27,10 @@ type Message struct {
 // Body is the request body sent to the router. Keeping it explicit (rather
 // than a generic map) keeps the generator's output schema stable.
 type Body struct {
-	Model    string    `json:"model,omitempty"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
+	Model     string    `json:"model,omitempty"`
+	Messages  []Message `json:"messages"`
+	Stream    bool      `json:"stream"`
+	MaxTokens int       `json:"max_tokens,omitempty"`
 }
 
 // Request is one entry in the trace. DelayMs is relative to the trace start;
