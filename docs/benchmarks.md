@@ -43,56 +43,60 @@ Run `go run ./cmd/bench --help` for the full flag list (including
 
 ## Real-workers benchmark
 
-This path measures actual KV-cache reuse on your laptop or workstation. It
-needs at least two llama.cpp instances on different ports.
+`bench/scripts/real-llm.sh` does the orchestration: it spins up two
+`llama-server` instances against a small GGUF, runs each routing strategy
+with FRESH workers (so KV caches start empty for each run), and aggregates
+per-strategy JSON summaries into one Markdown report at
+`bench/results/real.md`.
 
-### 1. Start two workers
+### 1. Install llama.cpp and download a small model
 
 ```bash
-# in two terminals
-llama-server -m models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf --port 8001 \
-  --ctx-size 8192 --parallel 4 --prompt-cache-all
-llama-server -m models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf --port 8002 \
-  --ctx-size 8192 --parallel 4 --prompt-cache-all
+brew install llama.cpp                   # one-time
+mkdir -p models                          # gitignored
+curl -L -o models/qwen2.5-0.5b.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
 ```
 
-(Use whatever model file you have. The bench measures *relative* TTFT
-between strategies, so the absolute model speed does not affect the
-comparison.)
+The bench measures *relative* TTFT between strategies, so any GGUF works;
+the 0.5 B Qwen model is the smallest reliably-available option.
 
-### 2. Configure the router
+### 2. Build and run
 
-Edit `config/config.yaml` so its `workers:` section points at the two
-ports above. Leave `strategy: prefixaware` for the first run.
+```bash
+make build
+bash bench/scripts/real-llm.sh
+```
 
-### 3. Run the router
+Outputs:
+- `bench/results/real-<strategy>.json` per-strategy summary
+- `bench/results/real.md` aggregated Markdown
+
+### 3. Tunables (env vars)
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `MODEL` | `models/qwen2.5-0.5b.gguf` | path to the GGUF |
+| `PORT_W0`, `PORT_W1` | 8001, 8002 | worker ports |
+| `SEED` | 42 | RNG seed for trace generation |
+| `SESSIONS` | 8 | distinct sessions in the trace |
+| `TURNS` | 4 | turns per session |
+| `SYS_LEN` | 512 | shared system-prompt length in chars |
+| `CODE_LEN` | 0 | per-session code-context length (0 disables) |
+| `MAX_TOKENS` | 16 | upstream `max_tokens`; small to keep runs fast |
+
+### 4. If you need a long-running router process
+
+The orchestrator script bypasses `cmd/router` and runs the routing
+in-process via `httptest`, because that's the fastest cycle for a
+benchmark sweep. If you want to point real OpenAI clients at the router,
+edit `config/config.yaml` so its `workers:` list points at the running
+`llama-server` instances and start `bin/router`:
 
 ```bash
 bin/router --config config/config.yaml
+# clients hit http://127.0.0.1:8080/v1/chat/completions
 ```
-
-### 4. Generate a trace and replay it
-
-```bash
-bin/gen-traces --out trace.jsonl --sessions 16 --turns 8 \
-  --system-len 1024 --code-context-len 2048
-bin/replay --trace trace.jsonl --endpoint http://127.0.0.1:8080/v1/chat/completions \
-  --out results-prefixaware.jsonl
-```
-
-### 5. Repeat for each strategy
-
-Set `router.strategy: roundrobin` (and `random`, `leastloaded`) in the
-config, restart the router, and rerun `bin/replay --out
-results-<strategy>.jsonl`. Use the same `trace.jsonl` for all runs.
-
-### 6. Aggregate
-
-Use `bin/bench` if you want the same Markdown table format as the
-in-process run: it expects in-process backends, so for cross-strategy
-comparison from the JSONL outputs above you can write a small script that
-reads each `results-*.jsonl`, calls `trace.Summarise(name, results)` for
-each, and emits the report. (The harness library functions are public.)
 
 ## How to interpret the numbers
 

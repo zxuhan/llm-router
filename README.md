@@ -19,9 +19,11 @@ cache hit rate looks the same on a 1 B model as on a 70 B model, and the
 what KV caches save you from.
 
 This repository is a **reference implementation** that demonstrates the
-algorithm against deterministic in-process backends. It is not a tuned
-production system, and it does not ship benchmarks against a real GPU
-fleet. See "Limitations" below for what is and is not claimed.
+algorithm against (a) deterministic in-process backends for the algorithmic
+signal and (b) two real `llama-server` workers running Qwen2.5-0.5B on
+Apple M1 Pro for the actual KV-cache and TTFT behaviour. It is not a tuned
+production system, and it does not ship benchmarks against a multi-GPU
+production fleet. See "Limitations" below for what is and is not claimed.
 
 ## What you get from this repo
 
@@ -85,36 +87,53 @@ model number.
 
 ### B. Run against real llama.cpp workers
 
-1. Start two `llama-server` instances on different ports (with
-   `--prompt-cache-all` enabled).
-2. Edit `config/config.yaml` so the `workers:` list points at them.
-3. Start the router:
-   ```bash
-   bin/router --config config/config.yaml
-   ```
-4. Generate a trace and replay:
-   ```bash
-   bin/gen-traces --out trace.jsonl
-   bin/replay --trace trace.jsonl --out results.jsonl
-   ```
+The fastest path is the orchestrated script: it spins up two `llama-server`
+instances, runs each strategy with fresh workers (so KV caches start
+empty per strategy), and emits a comparison report.
+
+```bash
+brew install llama.cpp                   # one-time
+mkdir -p models                          # one-time; gitignored
+curl -L -o models/qwen2.5-0.5b.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+make build
+bash bench/scripts/real-llm.sh
+$EDITOR bench/results/real.md
+```
+
+Tunables: `SESSIONS`, `TURNS`, `SYS_LEN`, `MAX_TOKENS`, `SEED`, `MODEL`,
+`PORT_W0`, `PORT_W1` are all environment overrides.
+
+For a long-running router process (rather than per-strategy bench
+subprocesses), point `config/config.yaml` at the workers and run
+`bin/router --config config/config.yaml`; clients then talk OpenAI to
+`http://127.0.0.1:8080/v1/chat/completions` directly.
 
 Detailed steps and tunables are in `docs/benchmarks.md`.
 
-## Headline numbers (in-process, fake backends)
+## Headline numbers (real `llama-server`, Qwen2.5-0.5B, M1 Pro, 2 workers)
 
-| Strategy | Hit rate | TTFT p50 | TTFT p95 | RPS |
-| --- | ---: | ---: | ---: | ---: |
-| roundrobin   |  0.00% |  8.83 ms | 10.14 ms | 242.4 |
-| random       |  0.00% |  8.87 ms | 10.04 ms | 242.4 |
-| leastloaded  |  0.00% |  8.84 ms |  9.78 ms | 242.4 |
-| prefixaware  | 98.96% |  8.87 ms | 12.44 ms | 240.8 |
+16 requests, 4 sessions x 4 turns, ~2 KB shared system prompt. Both
+workers started cold; restarted between strategies so each strategy has
+empty KV caches.
 
-Same trace, same backends, only the router differs. Hit rate is the
-algorithmic signal; TTFT is similar because the fake backends emit a
-fixed simulated TTFT regardless of prefix state. On real workers, the
-hit-rate gap is what turns into a TTFT gap.
+| Strategy | Hit rate (router) | KV cached (upstream) | TTFT p50 | **TTFT p95** | RPS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| roundrobin   |  0.00% | 66.31% | 351 ms | **1415 ms** | 6.6 |
+| random       |  0.00% | 67.14% | 475 ms | **1547 ms** | 6.2 |
+| leastloaded  |  0.00% | 70.80% | 227 ms | **1437 ms** | 7.3 |
+| prefixaware  | 93.75% | 70.51% | 490 ms | **898 ms**  | 6.6 |
 
-For the high-load scenario (where the safety valve fires) and the full
+**~37% lower p95 TTFT** for `prefixaware` vs round-robin in this regime.
+The KV-cache reuse rate from llama.cpp's `prompt_tokens_details.cached_tokens`
+is similar across strategies (every worker eventually warms), but
+`prefixaware` removes the cold-prefill tail by concentrating prefix
+traffic on a single worker and then keeping it there. p50 is not improved
+because cold requests still happen on the first instance of any prefix;
+the win is at the tail.
+
+For the algorithmic signal in isolation (in-process fakes, hit rate of
+98.96% vs 0%), the saturation/safety-valve regime, and the full
 methodology, see `docs/results.md`.
 
 ## Limitations and caveats
@@ -122,9 +141,11 @@ methodology, see `docs/results.md`.
 - **Reference implementation, not a production system.** No
   authentication, no rate limiting, no graceful failover beyond the
   safety valve. Operate behind a real ingress.
-- **Numbers in this repo are from in-process fake backends.** Replace
-  the simulator with a real worker fleet (instructions in
-  `docs/benchmarks.md`) to measure your hardware.
+- **Real-worker numbers are from a 0.5 B model on a single M1 Pro.** The
+  algorithm is the same on a 70 B model; the absolute TTFT savings scale
+  with prefill cost (which grows roughly linearly with model size). What
+  is demonstrated here is the qualitative win at the tail and the
+  router-side hit-rate signal.
 - **Tokenisation is approximated by chunk-hashing**, not a real
   tokenizer. ADR 0006 explains the trade-off; for byte-for-byte shared
   prefixes (which is what KV caches actually key on) the approximation
