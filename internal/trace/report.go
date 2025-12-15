@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -19,35 +20,59 @@ type Percentiles struct {
 
 // Summary aggregates one strategy's run. All durations are wall-clock measured
 // at the replayer (i.e. as the client experiences them).
+//
+// The decision-class fields are mutually exclusive and partition the
+// successful requests:
+//
+//	Successful = PinnedRequests + SpilledRequests + FallbackRequests + NeutralRequests
+//
+// HitRequests = PinnedRequests + SpilledRequests (any prefix-driven
+// decision); kept as a single rollup for back-compat and for the headline
+// table. HitRate = HitRequests / Successful.
 type Summary struct {
-	Strategy        string         `json:"strategy"`
-	Requests        int            `json:"requests"`
-	Successful      int            `json:"successful"`
-	Errors          int            `json:"errors"`
-	HitRequests     int            `json:"hit_requests"`
-	HitRate         float64        `json:"hit_rate"`
-	BackendCounts   map[string]int `json:"backend_counts"`
-	TTFT            Percentiles    `json:"ttft"`
-	Total           Percentiles    `json:"total"`
-	ThroughputRPS   float64        `json:"throughput_rps"`
-	WallTimeSeconds float64        `json:"wall_time_seconds"`
-	BytesIn         int64          `json:"bytes_in"`
+	Strategy         string         `json:"strategy"`
+	Requests         int            `json:"requests"`
+	Successful       int            `json:"successful"`
+	Errors           int            `json:"errors"`
+	HitRequests      int            `json:"hit_requests"`
+	HitRate          float64        `json:"hit_rate"`
+	PinnedRequests   int            `json:"pinned_requests"`   // strict longest-prefix
+	SpilledRequests  int            `json:"spilled_requests"`  // spilled-from-saturated
+	FallbackRequests int            `json:"fallback_requests"` // fallback-* and spilled-fallback-*
+	NeutralRequests  int            `json:"neutral_requests"`  // non-prefix routers (round-robin etc)
+	BackendCounts    map[string]int `json:"backend_counts"`
+	TTFT             Percentiles    `json:"ttft"`
+	Total            Percentiles    `json:"total"`
+	ThroughputRPS    float64        `json:"throughput_rps"`
+	WallTimeSeconds  float64        `json:"wall_time_seconds"`
+	BytesIn          int64          `json:"bytes_in"`
 	// PromptTokens and CachedTokens are summed across requests when the
 	// upstream returns OpenAI-style usage. CacheTokenRate is
-	// CachedTokens/PromptTokens. Zero indicates either no usage data or no
-	// hits.
-	PromptTokens   int     `json:"prompt_tokens"`
-	CachedTokens   int     `json:"cached_tokens"`
-	CacheTokenRate float64 `json:"cache_token_rate"`
+	// CachedTokens/PromptTokens. UpstreamHits counts requests where
+	// CachedTokens > 0 (i.e. the upstream actually skipped *some* prefill).
+	// These are the *outcome* signal, distinct from the router-decision
+	// signals above.
+	PromptTokens    int     `json:"prompt_tokens"`
+	CachedTokens    int     `json:"cached_tokens"`
+	CacheTokenRate  float64 `json:"cache_token_rate"`
+	UpstreamHits    int     `json:"upstream_hits"`
+	UpstreamHitRate float64 `json:"upstream_hit_rate"`
 }
 
-// Summarise computes a Summary over the given results. A request is counted
-// as a hit when the response carried an X-Router-Reason indicating prefix
-// participation OR when the replayer otherwise recorded a non-empty
-// BackendID with no error - this leaves room for non-prefix routers (which
-// will simply have hit_rate = 0). The hit definition used here corresponds
-// to "the chosen backend already held at least one prefix chunk" only when
-// the upstream populates that signal, which our proxy does via a header.
+// Summarise computes a Summary over the given results. Each successful
+// request is classified into exactly one decision class based on the
+// X-Router-Reason header surfaced by the proxy:
+//
+//   - "longest-prefix"          -> Pinned   (the prefix-aware logic chose the worker with the longest match)
+//   - "spilled-from-saturated"  -> Spilled  (best-match worker was saturated; spilled to a non-saturated next-best match)
+//   - "fallback-*"              -> Fallback (no worker met the match threshold)
+//   - "spilled-fallback-*"      -> Fallback (best-match saturated and no fallback candidate met threshold)
+//   - everything else           -> Neutral  (non-prefix routers)
+//
+// HitRequests is the convenience rollup Pinned+Spilled. The orthogonal
+// outcome signal (UpstreamHits, CacheTokenRate) is computed from
+// upstream-reported `usage.prompt_tokens_details.cached_tokens` when
+// available; it is independent of the routing decision class.
 func Summarise(strategy string, results []Result) Summary {
 	s := Summary{Strategy: strategy, BackendCounts: map[string]int{}}
 	if len(results) == 0 {
@@ -70,8 +95,21 @@ func Summarise(strategy string, results []Result) Summary {
 		if r.BackendID != "" {
 			s.BackendCounts[r.BackendID]++
 		}
-		if r.Reason == "longest-prefix" || r.Reason == "spilled-from-saturated" {
+		if r.CachedTokens > 0 {
+			s.UpstreamHits++
+		}
+		switch {
+		case r.Reason == "longest-prefix":
+			s.PinnedRequests++
 			s.HitRequests++
+		case r.Reason == "spilled-from-saturated":
+			s.SpilledRequests++
+			s.HitRequests++
+		case strings.HasPrefix(r.Reason, "fallback-"),
+			strings.HasPrefix(r.Reason, "spilled-fallback-"):
+			s.FallbackRequests++
+		default:
+			s.NeutralRequests++
 		}
 		if r.TTFT > 0 {
 			ttftSamples = append(ttftSamples, r.TTFT)
@@ -88,6 +126,7 @@ func Summarise(strategy string, results []Result) Summary {
 	}
 	if s.Successful > 0 {
 		s.HitRate = float64(s.HitRequests) / float64(s.Successful)
+		s.UpstreamHitRate = float64(s.UpstreamHits) / float64(s.Successful)
 	}
 	if s.PromptTokens > 0 {
 		s.CacheTokenRate = float64(s.CachedTokens) / float64(s.PromptTokens)
@@ -193,6 +232,28 @@ func WriteMarkdown(summaries []Summary, w io.Writer) error {
 		}
 		bw.line("")
 	}
+
+	// Decision breakdown is only meaningful for prefix-aware (or other
+	// strategies that produce non-Neutral classes); skip the section
+	// entirely when every strategy is fully Neutral.
+	if anyPrefixDecisions(summaries) {
+		bw.line("## Routing decision breakdown")
+		bw.line("")
+		bw.line("| Strategy | Pinned (longest-prefix) | Spilled (next-best) | Fallback | Neutral | Upstream KV hit reqs |")
+		bw.line("| --- | ---: | ---: | ---: | ---: | ---: |")
+		for _, s := range summaries {
+			bw.linef("| %s | %d | %d | %d | %d | %d / %d |",
+				s.Strategy,
+				s.PinnedRequests,
+				s.SpilledRequests,
+				s.FallbackRequests,
+				s.NeutralRequests,
+				s.UpstreamHits,
+				s.Successful,
+			)
+		}
+		bw.line("")
+	}
 	bw.line("## Notes")
 	bw.line("")
 	bw.line("- Hit rate is the fraction of successful requests for which the router")
@@ -206,6 +267,18 @@ func WriteMarkdown(summaries []Summary, w io.Writer) error {
 	bw.line("- RPS is computed as successful requests divided by the wall-clock window")
 	bw.line("  between the first started and last completed request.")
 	return bw.err
+}
+
+// anyPrefixDecisions reports whether any summary observed a non-Neutral
+// routing decision class. Used to gate the decision-breakdown section so
+// reports that compare only oblivious strategies stay terse.
+func anyPrefixDecisions(summaries []Summary) bool {
+	for _, s := range summaries {
+		if s.PinnedRequests+s.SpilledRequests+s.FallbackRequests > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // errWriter is a tiny adapter that captures the first write error so loops can
