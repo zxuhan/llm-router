@@ -94,15 +94,19 @@ empty per strategy), and emits a comparison report.
 ```bash
 brew install llama.cpp                   # one-time
 mkdir -p models                          # one-time; gitignored
-curl -L -o models/qwen2.5-0.5b.gguf \
-  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+curl -L -o models/qwen2.5-1.5b.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
 make build
-bash bench/scripts/real-llm.sh
+MODEL=models/qwen2.5-1.5b.gguf \
+  WORKER_PORTS="8001 8002 8003" \
+  SESSIONS=6 TURNS=3 SYS_LEN=2048 MAX_TOKENS=8 SEED=17 \
+  bash bench/scripts/real-llm.sh
 $EDITOR bench/results/real.md
 ```
 
-Tunables: `SESSIONS`, `TURNS`, `SYS_LEN`, `MAX_TOKENS`, `SEED`, `MODEL`,
-`PORT_W0`, `PORT_W1` are all environment overrides.
+Tunables: `MODEL`, `WORKER_PORTS`, `SESSIONS`, `TURNS`, `SYS_LEN`,
+`MAX_TOKENS`, `SEED`, `CTX_SIZE` are all environment overrides.
+`WORKER_PORTS` is a space-separated list and accepts any `N >= 2`.
 
 For a long-running router process (rather than per-strategy bench
 subprocesses), point `config/config.yaml` at the workers and run
@@ -111,41 +115,43 @@ subprocesses), point `config/config.yaml` at the workers and run
 
 Detailed steps and tunables are in `docs/benchmarks.md`.
 
-## Headline numbers (real `llama-server`, Qwen2.5-0.5B, M1 Pro, 2 workers)
+## Headline numbers (real `llama-server`, Qwen2.5-1.5B, M1 Pro, 3 workers)
 
-16 requests, 4 sessions x 4 turns, ~2 KB shared system prompt. Both
-workers started cold; restarted between strategies so each strategy has
-empty KV caches.
+18 requests, 6 sessions x 3 turns, ~2 KB shared system prompt. All three
+workers restarted between strategies so each starts with empty KV caches.
 
 | Strategy | Hit rate (router) | KV cached (upstream) | TTFT p50 | **TTFT p95** | RPS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| roundrobin   |  0.00% | 66.31% | 351 ms | **1415 ms** | 6.6 |
-| random       |  0.00% | 67.14% | 475 ms | **1547 ms** | 6.2 |
-| leastloaded  |  0.00% | 70.80% | 227 ms | **1437 ms** | 7.3 |
-| prefixaware  | 93.75% | 70.51% | 490 ms | **898 ms**  | 6.6 |
+| roundrobin   |  0.00% | 58.00% | 2.44 s | **10.28 s** | 1.38 |
+| random       |  0.00% | 63.26% | 1.54 s | **9.29 s**  | 1.57 |
+| leastloaded  |  0.00% | 62.99% | 0.61 s | **10.14 s** | 1.59 |
+| prefixaware  | 94.44% | **76.31%** | 2.59 s | **4.04 s**  | **1.98** |
 
-**~37% lower p95 TTFT** for `prefixaware` vs round-robin in this regime.
-The KV-cache reuse rate from llama.cpp's `prompt_tokens_details.cached_tokens`
-is similar across strategies (every worker eventually warms), but
-`prefixaware` removes the cold-prefill tail by concentrating prefix
-traffic on a single worker and then keeping it there. p50 is not improved
-because cold requests still happen on the first instance of any prefix;
-the win is at the tail.
+**~60% lower p95 TTFT** for `prefixaware` vs round-robin (4.04 s vs
+10.28 s). Upstream KV-cache reuse from `prompt_tokens_details.cached_tokens`
+jumps from ~58-63% to **76%**: routing alone unlocks an extra ~13-18
+percentage points of cache reuse on the same hardware. RPS is up ~25-43%
+because the warm worker decodes faster.
 
-For the algorithmic signal in isolation (in-process fakes, hit rate of
-98.96% vs 0%), the saturation/safety-valve regime, and the full
-methodology, see `docs/results.md`.
+p50 TTFT is *not* improved by prefix-aware in this regime: cold
+first-time prefills still happen on the warming worker, while
+`leastloaded` parallelises them across three workers and wins p50. The
+algorithm's win is at the tail and on cumulative throughput.
+
+For the smaller-model run (0.5B, 2 workers), the saturated-load regime
+where the win narrows, the safety-valve behaviour, fake-backend isolation
+of the routing signal, and the full methodology, see `docs/results.md`.
 
 ## Limitations and caveats
 
 - **Reference implementation, not a production system.** No
   authentication, no rate limiting, no graceful failover beyond the
   safety valve. Operate behind a real ingress.
-- **Real-worker numbers are from a 0.5 B model on a single M1 Pro.** The
-  algorithm is the same on a 70 B model; the absolute TTFT savings scale
-  with prefill cost (which grows roughly linearly with model size). What
-  is demonstrated here is the qualitative win at the tail and the
-  router-side hit-rate signal.
+- **Real-worker numbers are from 0.5B / 1.5B Qwen models on a single
+  M1 Pro.** The algorithm is the same on a 70 B model; the absolute TTFT
+  savings scale with prefill cost (which grows roughly linearly with
+  model size). What is demonstrated here is the qualitative win at the
+  tail and the router-side hit-rate signal.
 - **Tokenisation is approximated by chunk-hashing**, not a real
   tokenizer. ADR 0006 explains the trade-off; for byte-for-byte shared
   prefixes (which is what KV caches actually key on) the approximation

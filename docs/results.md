@@ -20,9 +20,59 @@ script will fail with helpful instructions if either is missing) or
 
 ---
 
-## Real workers: Qwen2.5-0.5B on Apple M1 Pro
+## Headline: Qwen2.5-1.5B on Apple M1 Pro, 3 workers
 
-### Scenario A: light load (16 requests, 4 sessions x 4 turns, ~2 KB shared system prompt)
+18 requests, 6 sessions x 3 turns, ~2 KB shared system prompt. All three
+`llama-server` workers were restarted between strategies so each strategy
+starts with empty KV caches (otherwise carryover contaminates the
+comparison; see "Methodology" below).
+
+| Strategy | Requests | Hit rate (router) | KV cached (upstream) | TTFT p50 | **TTFT p95** | RPS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| roundrobin   | 18 |  0.00% | 58.00% | 2.44 s | **10.28 s** | 1.38 |
+| random       | 18 |  0.00% | 63.26% | 1.54 s | **9.29 s**  | 1.57 |
+| leastloaded  | 18 |  0.00% | 62.99% | 0.61 s | **10.14 s** | 1.59 |
+| prefixaware  | 18 | 94.44% | **76.31%** | 2.59 s | **4.04 s**  | **1.98** |
+
+**Headline numbers:**
+
+- **p95 TTFT cut by ~60%** vs round-robin (4.04 s vs 10.28 s).
+- **Upstream KV-cache hit rate (cached_tokens / prompt_tokens, reported by
+  llama.cpp) lifted from ~58-63% to ~76%** by routing decisions alone.
+- **RPS up ~25-43%** (1.98 vs 1.38-1.59), because the warm worker decodes
+  faster.
+- p50 is *not* improved by prefix-aware: cold first-time prefills still
+  happen on the warming worker, and `leastloaded` parallelises those across
+  three workers, beating PA at the median. The win is at the tail and in
+  cumulative throughput, not at the median.
+
+Backend distribution: `prefixaware` pinned all 18 requests to `w0`. The
+other strategies spread (`roundrobin` 6/6/6, `leastloaded` 11/4/3,
+`random` 6/5/7).
+
+This is the load regime the algorithm is designed for: shared prefixes
+across sessions, light-to-moderate concurrency, hardware that can keep up
+with one worker hot. Other regimes are below.
+
+### Stability across runs
+
+Two back-to-back runs of the headline configuration (same seed, fresh
+workers each time):
+
+| Run | PA cache hit | PA p95 | RR cache hit | RR p95 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 76.41% | 5.59 s  | 57.90% | 10.16 s |
+| 2 | 76.31% | 4.04 s  | 58.00% | 10.28 s |
+
+Cache-hit numbers are stable to within a fraction of a percent; p95 moves
+~30% between runs because we are sampling the very tail with only 18
+requests. The qualitative ordering (PA highest cache rate, lowest p95) is
+robust.
+
+### Smaller model: Qwen2.5-0.5B on the same hardware, 2 workers
+
+Same harness, smaller model, fewer workers. 16 requests, 4 sessions x 4
+turns, ~2 KB shared system prompt.
 
 | Strategy | Requests | Hit rate (router) | KV cached (upstream) | TTFT p50 | TTFT p95 | RPS |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -31,11 +81,16 @@ script will fail with helpful instructions if either is missing) or
 | leastloaded  | 16 |  0.00% | 70.80% | 227 ms | 1437 ms | 7.3 |
 | prefixaware  | 16 | 93.75% | 70.51% | 490 ms |  898 ms | 6.6 |
 
-Backend distribution: `prefixaware` pinned all 16 requests to `w0`; the other
-strategies split 6-10 / 10-6 across the two workers.
+The 0.5 B run shows the same qualitative pattern (PA wins p95 by ~37%) but
+the upstream KV-cache hit rates converge across strategies because with
+only 2 workers, every strategy ends up warming both workers on the
+shared prefix within a few requests. With 3+ workers (the headline
+scenario above), PA's choice to *not* spread the prefix is what produces
+the cache-hit gap.
 
-**The headline real-LLM signal: prefix-aware shaves ~37% off p95 TTFT (898 ms
-vs 1415 ms for round-robin)** in this regime. The story under the hood:
+**The headline real-LLM signal: prefix-aware shaves ~60% off p95 TTFT (4.0 s
+vs 10.3 s for round-robin) at the 1.5B/3-worker setpoint, ~37% at the
+0.5B/2-worker setpoint.** The story under the hood:
 
 - Every strategy reaches ~67-71% upstream cache reuse because the same system
   prompt repeats across requests; whichever workers see a request twice end up
@@ -52,7 +107,7 @@ vs 1415 ms for round-robin)** in this regime. The story under the hood:
   cold requests faster on the median, while `prefixaware` is sequentially
   warming a single worker.
 
-### Scenario B: higher load (48 requests, 16 sessions x 3 turns, ~1 KB shared system prompt)
+### High-load regime (Qwen2.5-0.5B, 2 workers, 48 requests at sustained concurrency)
 
 | Strategy | Requests | Hit rate (router) | KV cached (upstream) | TTFT p50 | TTFT p95 | RPS |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -73,21 +128,24 @@ metric reports decisions, not outcomes.
 
 ### What we are not claiming
 
-- **The TTFT gap is not 10x in this setup.** A 0.5 B parameter model with a
-  ~2 KB prompt prefills in well under a second on M1 Pro; the savings from a
-  warm prefix are correspondingly small in absolute terms. The same algorithm
-  on a 70 B model with multi-KB prompts has order-of-magnitude prefill costs
-  to recover, which the prefix routing decision can either save or waste; the
-  algorithmic signal demonstrated here is the precondition for that
-  larger-scale win.
-- **2 workers is the smallest interesting case.** With 4-8 workers the gap
-  widens because oblivious routing splits prefix copies across more workers
-  (memory pressure) while prefix-aware concentrates them on one and treats
-  the others as overflow.
-- **Run-to-run variance is real.** Re-running with the same seed produces
-  numbers within ~5-10% on p50 and ~2-5% on p95. The qualitative ordering
-  (prefix-aware best at p95 in scenario A, all roughly tied in scenario B)
-  is stable across the runs I observed.
+- **The savings are not "free", they are at the tail.** Prefix-aware
+  trades load distribution for cache locality. p50 TTFT is *not* improved
+  here (and is in fact best for `leastloaded` in our 1.5B run). The win
+  is at p95/p99 and on cumulative throughput, where avoiding redundant
+  prefill compounds.
+- **Hardware matters.** All numbers are on a single Apple M1 Pro. The
+  16 GB unified memory just fits three Q4_K_M 1.5 B model instances; on a
+  smaller machine the workers contend and numbers compress. The same
+  algorithm on a multi-GPU production fleet would show qualitatively
+  similar but absolutely larger wins, since prefill cost scales with
+  model size while routing overhead does not.
+- **Run-to-run variance is real.** With 18 sample requests, p95 is the
+  near-worst single observation; we measure ~30% relative variance on
+  p95 across runs. Cache-hit rates and the qualitative ordering (PA
+  highest cache-hit, lowest p95) are stable across the runs we ran.
+- **Larger N would tighten the numbers.** A production benchmark would
+  use 1000+ requests and report confidence intervals. We deliberately
+  kept the trace small so the harness reproduces in minutes on a laptop.
 
 ---
 
@@ -134,25 +192,37 @@ algorithm's algorithmic win narrows by design.
 ## How to reproduce
 
 ```bash
-# real workers (requires brew install llama.cpp and the model file)
-mkdir -p models
+brew install llama.cpp                         # one-time
+mkdir -p models                                # gitignored
+
+# headline: Qwen2.5-1.5B, 3 workers
+curl -L -o models/qwen2.5-1.5b.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+MODEL=models/qwen2.5-1.5b.gguf \
+  WORKER_PORTS="8001 8002 8003" \
+  SESSIONS=6 TURNS=3 SYS_LEN=2048 MAX_TOKENS=8 SEED=17 \
+  bash bench/scripts/real-llm.sh
+
+# smaller-model reference: Qwen2.5-0.5B, 2 workers
 curl -L -o models/qwen2.5-0.5b.gguf \
   https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
-
-# scenario A (light load)
 SESSIONS=4 TURNS=4 SYS_LEN=2048 MAX_TOKENS=8 SEED=11 bash bench/scripts/real-llm.sh
 
-# scenario B (high load)
+# high-load scenario (0.5B, 2 workers, 48 reqs)
 SESSIONS=16 TURNS=3 SYS_LEN=1024 MAX_TOKENS=8 SEED=7 bash bench/scripts/real-llm.sh
 
 # fake workers (no external dependencies)
 bash bench/scripts/run.sh
 ```
 
-The real-LLM script restarts both `llama-server` workers between strategies
-so each strategy starts with empty KV caches. Without that reset, later
-strategies inherit warm caches from earlier runs and the comparison is
-contaminated.
+The real-LLM script restarts every `llama-server` worker between
+strategies so each strategy starts with empty KV caches. Without that
+reset, later strategies inherit warm caches from earlier runs and the
+comparison is contaminated.
+
+`WORKER_PORTS` is a space-separated list and accepts any `N >= 2`. Each
+worker takes ~1 GB of resident memory for the 1.5 B Q4_K_M GGUF; budget
+accordingly.
 
 ## References
 

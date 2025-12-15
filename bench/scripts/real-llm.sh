@@ -22,14 +22,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 MODEL="${MODEL:-models/qwen2.5-0.5b.gguf}"
-PORT_W0="${PORT_W0:-8001}"
-PORT_W1="${PORT_W1:-8002}"
+# WORKER_PORTS is a space-separated list of ports for the N workers.
+# Default is two; set e.g. WORKER_PORTS="8001 8002 8003" for three.
+WORKER_PORTS="${WORKER_PORTS:-8001 8002}"
 SEED="${SEED:-42}"
 SESSIONS="${SESSIONS:-8}"
 TURNS="${TURNS:-4}"
 SYS_LEN="${SYS_LEN:-512}"
 CODE_LEN="${CODE_LEN:-0}"
 MAX_TOKENS="${MAX_TOKENS:-16}"
+CTX_SIZE="${CTX_SIZE:-4096}"
 
 OUT_DIR="bench/results"
 mkdir -p "$OUT_DIR"
@@ -46,43 +48,47 @@ if [ ! -x bin/bench ]; then
 fi
 
 start_workers() {
-  echo "  booting fresh workers on ports $PORT_W0 / $PORT_W1..."
-  llama-server -m "$MODEL" --port "$PORT_W0" --ctx-size 4096 --parallel 2 \
-    --cache-reuse 256 --no-webui --log-disable >/tmp/llm-router-w0.log 2>&1 &
-  echo $! > /tmp/llm-router-w0.pid
-  llama-server -m "$MODEL" --port "$PORT_W1" --ctx-size 4096 --parallel 2 \
-    --cache-reuse 256 --no-webui --log-disable >/tmp/llm-router-w1.log 2>&1 &
-  echo $! > /tmp/llm-router-w1.pid
+  echo "  booting fresh workers on ports: $WORKER_PORTS"
+  i=0
+  for port in $WORKER_PORTS; do
+    llama-server -m "$MODEL" --port "$port" --ctx-size "$CTX_SIZE" --parallel 2 \
+      --cache-reuse 256 --no-webui --log-disable >/tmp/llm-router-w$i.log 2>&1 &
+    echo $! > /tmp/llm-router-w$i.pid
+    i=$((i+1))
+  done
 
-  # Wait for both /health endpoints to come up.
-  for url in "http://127.0.0.1:$PORT_W0/health" "http://127.0.0.1:$PORT_W1/health"; do
-    for _ in $(seq 1 60); do
-      if curl -s "$url" | grep -q '"ok"'; then break; fi
+  # Wait for every /health endpoint to come up.
+  for port in $WORKER_PORTS; do
+    for _ in $(seq 1 120); do
+      if curl -s "http://127.0.0.1:$port/health" | grep -q '"ok"'; then break; fi
       sleep 0.5
     done
   done
 }
 
 stop_workers() {
-  for pidfile in /tmp/llm-router-w0.pid /tmp/llm-router-w1.pid; do
-    if [ -f "$pidfile" ]; then
-      pid=$(cat "$pidfile" 2>/dev/null || true)
-      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null || true
-        # Wait briefly for graceful shutdown.
-        for _ in $(seq 1 20); do
-          if ! kill -0 "$pid" 2>/dev/null; then break; fi
-          sleep 0.1
-        done
-        kill -9 "$pid" 2>/dev/null || true
-      fi
-      rm -f "$pidfile"
+  for pidfile in /tmp/llm-router-w*.pid; do
+    [ -f "$pidfile" ] || continue
+    pid=$(cat "$pidfile" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      # Wait briefly for graceful shutdown.
+      for _ in $(seq 1 20); do
+        if ! kill -0 "$pid" 2>/dev/null; then break; fi
+        sleep 0.1
+      done
+      kill -9 "$pid" 2>/dev/null || true
     fi
+    rm -f "$pidfile"
   done
 }
 trap stop_workers EXIT
 
-REAL="http://127.0.0.1:$PORT_W0,http://127.0.0.1:$PORT_W1"
+REAL=""
+for port in $WORKER_PORTS; do
+  if [ -n "$REAL" ]; then REAL="$REAL,"; fi
+  REAL="${REAL}http://127.0.0.1:$port"
+done
 
 for strat in roundrobin random leastloaded prefixaware; do
   echo "=== $strat ==="
