@@ -72,6 +72,13 @@ type WorkerConfig struct {
 	KVBudget    int           `yaml:"kv_budget"`    // approx tokens (chunks) per worker
 	MaxInflight int           `yaml:"max_inflight"` // 0 disables the cap
 	Timeout     time.Duration `yaml:"timeout"`      // upstream request timeout
+	// BreakerThreshold is the number of consecutive 5xx/transport failures
+	// that trips this backend out of rotation. Zero falls back to the
+	// circuit breaker's internal default (5).
+	BreakerThreshold int `yaml:"breaker_threshold"`
+	// BreakerCooldown is how long the breaker stays open before
+	// auto-resetting. Zero falls back to the breaker's default (30s).
+	BreakerCooldown time.Duration `yaml:"breaker_cooldown"`
 }
 
 // LoggingConfig configures the structured logger.
@@ -248,6 +255,12 @@ func (c Config) Validate() error {
 		}
 		if w.Timeout < 0 {
 			errs = append(errs, fmt.Errorf("%s.timeout must be >= 0", ctx))
+		}
+		if w.BreakerThreshold < 0 {
+			errs = append(errs, fmt.Errorf("%s.breaker_threshold must be >= 0", ctx))
+		}
+		if w.BreakerCooldown < 0 {
+			errs = append(errs, fmt.Errorf("%s.breaker_cooldown must be >= 0", ctx))
 		}
 	}
 

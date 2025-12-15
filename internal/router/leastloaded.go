@@ -23,21 +23,22 @@ func (*LeastLoaded) Name() string { return "leastloaded" }
 
 // Choose implements Router.
 func (l *LeastLoaded) Choose(_ context.Context, _ string) (Decision, error) {
-	if len(l.backends) == 0 {
+	pool := l.healthy()
+	if len(pool) == 0 {
 		return Decision{}, ErrNoBackends
 	}
 	// Snapshot inflight counts up front. The values may change between this
 	// loop and dispatch, but a self-consistent local view is enough for the
 	// tie-break to be deterministic.
 	bestIdx := 0
-	bestLoad := l.backends[0].Inflight()
-	for i := 1; i < len(l.backends); i++ {
-		if got := l.backends[i].Inflight(); got < bestLoad {
+	bestLoad := pool[0].Inflight()
+	for i := 1; i < len(pool); i++ {
+		if got := pool[i].Inflight(); got < bestLoad {
 			bestIdx = i
 			bestLoad = got
 		}
 	}
-	return Decision{Backend: l.backends[bestIdx], Reason: "least-loaded"}, nil
+	return Decision{Backend: pool[bestIdx], Reason: "least-loaded"}, nil
 }
 
 // Update implements Router.

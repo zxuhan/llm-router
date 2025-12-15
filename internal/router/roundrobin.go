@@ -25,13 +25,14 @@ func (*RoundRobin) Name() string { return "roundrobin" }
 
 // Choose implements Router.
 func (r *RoundRobin) Choose(_ context.Context, _ string) (Decision, error) {
-	if len(r.backends) == 0 {
+	pool := r.healthy()
+	if len(pool) == 0 {
 		return Decision{}, ErrNoBackends
 	}
 	// Fetch-and-add gives a strictly monotonic counter even under concurrency.
 	// We subtract 1 so the first call returns index 0.
-	idx := int((r.counter.Add(1) - 1) % uint64(len(r.backends)))
-	return Decision{Backend: r.backends[idx], Reason: "round-robin"}, nil
+	idx := int((r.counter.Add(1) - 1) % uint64(len(pool)))
+	return Decision{Backend: pool[idx], Reason: "round-robin"}, nil
 }
 
 // Update implements Router. RoundRobin does not maintain per-prompt state.

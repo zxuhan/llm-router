@@ -25,6 +25,12 @@ type LlamaCppOptions struct {
 	// HTTPClient lets tests inject a stubbed transport; nil uses a default
 	// streaming-friendly client.
 	HTTPClient *http.Client
+	// CircuitBreakerThreshold is the number of consecutive failures that
+	// trips the breaker. Defaults to 5 (clamped from non-positive values).
+	CircuitBreakerThreshold int
+	// CircuitBreakerCooldown is how long the breaker stays open after
+	// tripping. Defaults to 30s.
+	CircuitBreakerCooldown time.Duration
 }
 
 // LlamaCpp is a Backend implementation that talks to llama.cpp's built-in HTTP
@@ -37,6 +43,7 @@ type LlamaCpp struct {
 	kvBudget int
 	client   *http.Client
 	inflight atomic.Int64
+	breaker  *CircuitBreaker
 }
 
 // NewLlamaCpp constructs a LlamaCpp backend with sane defaults.
@@ -79,8 +86,16 @@ func NewLlamaCpp(opts LlamaCppOptions) (*LlamaCpp, error) {
 		base:     strings.TrimRight(opts.URL, "/"),
 		kvBudget: opts.KVBudget,
 		client:   client,
+		breaker:  NewCircuitBreaker(opts.CircuitBreakerThreshold, opts.CircuitBreakerCooldown),
 	}, nil
 }
+
+// Healthy implements Backend. Returns false while the circuit breaker is
+// open. The breaker auto-resets after its cooldown.
+func (b *LlamaCpp) Healthy() bool { return b.breaker.Allow() }
+
+// CircuitState exposes the breaker's snapshot for diagnostics and tests.
+func (b *LlamaCpp) CircuitState() CircuitState { return b.breaker.Snapshot() }
 
 // ID implements Backend.
 func (b *LlamaCpp) ID() string { return b.id }
@@ -144,7 +159,15 @@ func (b *LlamaCpp) Do(ctx context.Context, r Request) (*http.Response, error) {
 	}
 	resp, err := b.client.Do(req)
 	if err != nil {
+		b.breaker.RecordFailure()
 		return nil, fmt.Errorf("backend %s: do: %w", b.id, err)
+	}
+	// 5xx counts as a server-side failure for the breaker; 4xx is a client
+	// problem and should not trip routing away from this worker.
+	if resp.StatusCode >= 500 {
+		b.breaker.RecordFailure()
+	} else {
+		b.breaker.RecordSuccess()
 	}
 	return resp, nil
 }

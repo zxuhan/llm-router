@@ -18,17 +18,22 @@ type fakeBackend struct {
 	url      string
 	kvBudget int
 	inflight atomic.Int64
+	healthy  atomic.Bool
 }
 
 func newFakeBackend(id string) *fakeBackend {
-	return &fakeBackend{id: id, url: "http://" + id, kvBudget: 1024}
+	b := &fakeBackend{id: id, url: "http://" + id, kvBudget: 1024}
+	b.healthy.Store(true)
+	return b
 }
 
-func (f *fakeBackend) ID() string      { return f.id }
-func (f *fakeBackend) URL() string     { return f.url }
-func (f *fakeBackend) KVBudget() int   { return f.kvBudget }
-func (f *fakeBackend) Inflight() int64 { return f.inflight.Load() }
-func (f *fakeBackend) Acquire()        { f.inflight.Add(1) }
+func (f *fakeBackend) ID() string        { return f.id }
+func (f *fakeBackend) URL() string       { return f.url }
+func (f *fakeBackend) KVBudget() int     { return f.kvBudget }
+func (f *fakeBackend) Inflight() int64   { return f.inflight.Load() }
+func (f *fakeBackend) Healthy() bool     { return f.healthy.Load() }
+func (f *fakeBackend) SetHealthy(v bool) { f.healthy.Store(v) }
+func (f *fakeBackend) Acquire()          { f.inflight.Add(1) }
 func (f *fakeBackend) Release() {
 	for {
 		v := f.inflight.Load()

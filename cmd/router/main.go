@@ -130,10 +130,12 @@ func buildBackends(workers []config.WorkerConfig) ([]backend.Backend, error) {
 	out := make([]backend.Backend, 0, len(workers))
 	for _, w := range workers {
 		b, err := backend.NewLlamaCpp(backend.LlamaCppOptions{
-			ID:       w.ID,
-			URL:      w.URL,
-			KVBudget: w.KVBudget,
-			Timeout:  w.Timeout,
+			ID:                      w.ID,
+			URL:                     w.URL,
+			KVBudget:                w.KVBudget,
+			Timeout:                 w.Timeout,
+			CircuitBreakerThreshold: w.BreakerThreshold,
+			CircuitBreakerCooldown:  w.BreakerCooldown,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("worker %s: %w", w.ID, err)

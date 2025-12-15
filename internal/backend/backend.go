@@ -53,4 +53,10 @@ type Backend interface {
 	// Release decrements the inflight counter; called by the proxy after the
 	// response has been fully proxied (or on error).
 	Release()
+
+	// Healthy reports whether the backend's circuit breaker currently allows
+	// traffic. Routers consult this to skip dead workers; the breaker
+	// auto-resets after its cooldown elapses, so a healthy=false backend will
+	// re-enter rotation on its own once the upstream recovers.
+	Healthy() bool
 }

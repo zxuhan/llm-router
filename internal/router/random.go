@@ -35,11 +35,12 @@ func (*Random) Name() string { return "random" }
 
 // Choose implements Router.
 func (r *Random) Choose(_ context.Context, _ string) (Decision, error) {
-	if len(r.backends) == 0 {
+	pool := r.healthy()
+	if len(pool) == 0 {
 		return Decision{}, ErrNoBackends
 	}
-	idx := r.rng(len(r.backends))
-	return Decision{Backend: r.backends[idx], Reason: "random"}, nil
+	idx := r.rng(len(pool))
+	return Decision{Backend: pool[idx], Reason: "random"}, nil
 }
 
 // Update implements Router.

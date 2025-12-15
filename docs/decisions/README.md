@@ -12,3 +12,4 @@ add a new ADR that supersedes the old one rather than editing in place.
 | 0004 | [LRU eviction with chunk-budget, prune dead branches](0004-eviction-policy.md) | accepted |
 | 0005 | [Safety valve for saturated workers](0005-safety-valve.md) | accepted |
 | 0006 | [Hash fixed-size byte chunks instead of running a real tokenizer](0006-tokenization-strategy.md) | accepted |
+| 0007 | [Two-state circuit breaker per backend](0007-circuit-breaker.md) | accepted |

@@ -59,3 +59,17 @@ func newBase(backends []backend.Backend) base {
 // Backends returns the configured backend list. The slice is internal; callers
 // must not mutate it.
 func (b base) Backends() []backend.Backend { return b.backends }
+
+// healthy returns the subset of the configured backends whose breakers
+// currently allow traffic. Strategies call this on every Choose; if it
+// returns empty, the strategy returns ErrNoBackends so the proxy can
+// surface a 503 to the caller.
+func (b base) healthy() []backend.Backend {
+	out := make([]backend.Backend, 0, len(b.backends))
+	for _, x := range b.backends {
+		if x.Healthy() {
+			out = append(out, x)
+		}
+	}
+	return out
+}

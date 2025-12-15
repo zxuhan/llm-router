@@ -85,14 +85,15 @@ type candidate struct {
 
 // Choose implements Router.
 func (p *PrefixAware) Choose(ctx context.Context, prompt string) (Decision, error) {
-	if len(p.backends) == 0 {
+	pool := p.healthy()
+	if len(pool) == 0 {
 		return Decision{}, ErrNoBackends
 	}
 	chunks := p.chunker(prompt)
 
-	// Snapshot every backend's match length and current inflight.
-	cands := make([]candidate, len(p.backends))
-	for i, b := range p.backends {
+	// Snapshot every healthy backend's match length and current inflight.
+	cands := make([]candidate, len(pool))
+	for i, b := range pool {
 		cands[i] = candidate{
 			idx:      i,
 			match:    p.trees[b.ID()].LongestMatch(chunks),
@@ -131,7 +132,7 @@ func (p *PrefixAware) Choose(ctx context.Context, prompt string) (Decision, erro
 			}
 			if c.inflight < int64(p.saturationInflight) {
 				return Decision{
-					Backend:     p.backends[c.idx],
+					Backend:     pool[c.idx],
 					MatchChunks: c.match,
 					Reason:      "spilled-from-saturated",
 				}, nil
@@ -148,7 +149,7 @@ func (p *PrefixAware) Choose(ctx context.Context, prompt string) (Decision, erro
 	}
 
 	return Decision{
-		Backend:     p.backends[best.idx],
+		Backend:     pool[best.idx],
 		MatchChunks: best.match,
 		Reason:      "longest-prefix",
 	}, nil
