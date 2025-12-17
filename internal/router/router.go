@@ -64,12 +64,24 @@ func (b base) Backends() []backend.Backend { return b.backends }
 // currently allow traffic. Strategies call this on every Choose; if it
 // returns empty, the strategy returns ErrNoBackends so the proxy can
 // surface a 503 to the caller.
+//
+// Fast path: when every backend is healthy (the steady-state common case),
+// the configured slice is returned directly with no allocation. Strategies
+// must therefore treat the returned slice as read-only.
 func (b base) healthy() []backend.Backend {
-	out := make([]backend.Backend, 0, len(b.backends))
-	for _, x := range b.backends {
-		if x.Healthy() {
-			out = append(out, x)
+	for i, x := range b.backends {
+		if !x.Healthy() {
+			// Slow path: at least one backend is unhealthy. Build a fresh
+			// slice excluding it (and any subsequent unhealthy ones).
+			out := make([]backend.Backend, 0, len(b.backends)-1)
+			out = append(out, b.backends[:i]...)
+			for _, y := range b.backends[i+1:] {
+				if y.Healthy() {
+					out = append(out, y)
+				}
+			}
+			return out
 		}
 	}
-	return out
+	return b.backends
 }

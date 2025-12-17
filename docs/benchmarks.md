@@ -107,6 +107,39 @@ bin/router --config config/config.yaml
 | TTFT p95 / p99 | Tail latency. | Saturated workers blow up the tail without the safety valve; that effect is observable in the harness. |
 | RPS | Successful requests divided by wall-clock window of the run. | Low because traces are bursty by design. Look at relative differences. |
 
+## Routing overhead microbenchmark
+
+`internal/router/bench_test.go` measures the cost of `Router.Choose`
+itself. Reproduce with:
+
+```bash
+go test -bench=. -benchmem -benchtime=2s -count=3 ./internal/router
+```
+
+Reference numbers on Apple M1 Pro (Go 1.23, `-race` off):
+
+| Strategy | N backends | Prompt size | ns/op | allocs |
+| --- | ---: | --- | ---: | ---: |
+| roundrobin   |  2 | -        |     8 | 0 |
+| roundrobin   | 16 | -        |    23 | 0 |
+| random       |  4 | -        |    14 | 0 |
+| leastloaded  | 16 | -        |    27 | 0 |
+| prefixaware  |  4 | ~700 B   |  1.5 us | 49 |
+| prefixaware  |  4 | ~4 KB    |  7.6 us | 256 |
+| prefixaware  | 16 | ~4 KB    |  8.8 us | 256 |
+| prefixaware (Update) | 4 | ~700 B | 2.0 us | 54 |
+
+The non-prefix strategies are zero-allocation in the steady state thanks
+to a fast path in the healthy-backend filter (see
+`internal/router/router.go`). PrefixAware allocates the chunk-hash
+sequence on each call; the per-chunk cost is dominated by FNV-1a
+hashing and the radix-tree descent.
+
+In every regime the routing overhead is dwarfed by the LLM TTFT itself
+(milliseconds to seconds). At ~1000 req/s, even the 4 KB prompt-aware
+case spends about 0.8% of CPU on routing decisions; the routing layer
+is not the bottleneck.
+
 ## Useful reading
 
 - SGLang's RadixAttention: https://arxiv.org/abs/2312.07104
