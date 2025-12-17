@@ -117,21 +117,24 @@ Detailed steps and tunables are in `docs/benchmarks.md`.
 
 ## Headline numbers (real `llama-server`, Qwen2.5-1.5B, M1 Pro, 3 workers)
 
+![TTFT and total-latency CDF across the four strategies](docs/cdf.png)
+
 18 requests, 6 sessions x 3 turns, ~2 KB shared system prompt. All three
 workers restarted between strategies so each starts with empty KV caches.
 
 | Strategy | Hit rate (router) | KV cached (upstream) | TTFT p50 | **TTFT p95** | RPS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| roundrobin   |  0.00% | 58.00% | 2.44 s | **10.28 s** | 1.38 |
-| random       |  0.00% | 63.26% | 1.54 s | **9.29 s**  | 1.57 |
-| leastloaded  |  0.00% | 62.99% | 0.61 s | **10.14 s** | 1.59 |
-| prefixaware  | 94.44% | **76.31%** | 2.59 s | **4.04 s**  | **1.98** |
+| roundrobin   |  0.00% | 59.31% | 1.67 s | **7.07 s**  | 1.90 |
+| random       |  0.00% | 59.22% | 1.61 s | **7.15 s**  | 1.90 |
+| leastloaded  |  0.00% | 63.64% | 0.63 s | **7.63 s**  | 2.21 |
+| prefixaware  | 94.44% | **76.31%** | 1.70 s | **3.16 s**  | **2.69** |
 
-**~60% lower p95 TTFT** for `prefixaware` vs round-robin (4.04 s vs
-10.28 s). Upstream KV-cache reuse from `prompt_tokens_details.cached_tokens`
-jumps from ~58-63% to **76%**: routing alone unlocks an extra ~13-18
-percentage points of cache reuse on the same hardware. RPS is up ~25-43%
-because the warm worker decodes faster.
+**~55% lower p95 TTFT** for `prefixaware` vs round-robin (3.16 s vs
+7.07 s) on this run; ~60% on the previous canonical run. Upstream
+KV-cache reuse from `prompt_tokens_details.cached_tokens` jumps from
+~59-64% to **76%**: routing alone unlocks an extra ~13-17 percentage
+points of cache reuse on the same hardware. RPS is up ~22-42% because
+the warm worker decodes faster.
 
 p50 TTFT is *not* improved by prefix-aware in this regime: cold
 first-time prefills still happen on the warming worker, while

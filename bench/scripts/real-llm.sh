@@ -104,7 +104,8 @@ for strat in roundrobin random leastloaded prefixaware; do
     --system-len "$SYS_LEN" \
     --code-context-len "$CODE_LEN" \
     --max-tokens "$MAX_TOKENS" \
-    --json "$OUT_DIR/real-$strat.json"
+    --json "$OUT_DIR/real-$strat.json" \
+    --raw-results "$OUT_DIR/raw"
 done
 
 stop_workers

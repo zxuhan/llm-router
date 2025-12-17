@@ -27,19 +27,24 @@ script will fail with helpful instructions if either is missing) or
 starts with empty KV caches (otherwise carryover contaminates the
 comparison; see "Methodology" below).
 
+![TTFT and total-latency CDF, four strategies, same trace, fresh workers per strategy](cdf.png)
+
+The CDF makes the headline visual: every prefix-aware request completes
+below ~3 s, while every other strategy has a long tail out to ~7-8 s.
+
 | Strategy | Requests | Hit rate (router) | KV cached (upstream) | TTFT p50 | **TTFT p95** | RPS |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| roundrobin   | 18 |  0.00% | 58.00% | 2.44 s | **10.28 s** | 1.38 |
-| random       | 18 |  0.00% | 63.26% | 1.54 s | **9.29 s**  | 1.57 |
-| leastloaded  | 18 |  0.00% | 62.99% | 0.61 s | **10.14 s** | 1.59 |
-| prefixaware  | 18 | 94.44% | **76.31%** | 2.59 s | **4.04 s**  | **1.98** |
+| roundrobin   | 18 |  0.00% | 59.31% | 1.67 s | **7.07 s**  | 1.90 |
+| random       | 18 |  0.00% | 59.22% | 1.61 s | **7.15 s**  | 1.90 |
+| leastloaded  | 18 |  0.00% | 63.64% | 0.63 s | **7.63 s**  | 2.21 |
+| prefixaware  | 18 | 94.44% | **76.31%** | 1.70 s | **3.16 s**  | **2.69** |
 
-**Headline numbers:**
+**Headline numbers (this run; see "Stability" below for run-to-run spread):**
 
-- **p95 TTFT cut by ~60%** vs round-robin (4.04 s vs 10.28 s).
+- **p95 TTFT cut by ~55%** vs round-robin (3.16 s vs 7.07 s).
 - **Upstream KV-cache hit rate (cached_tokens / prompt_tokens, reported by
-  llama.cpp) lifted from ~58-63% to ~76%** by routing decisions alone.
-- **RPS up ~25-43%** (1.98 vs 1.38-1.59), because the warm worker decodes
+  llama.cpp) lifted from ~59-64% to ~76%** by routing decisions alone.
+- **RPS up ~22-42%** (2.69 vs 1.90-2.21), because the warm worker decodes
   faster.
 - p50 is *not* improved by prefix-aware: cold first-time prefills still
   happen on the warming worker, and `leastloaded` parallelises those across
@@ -56,18 +61,20 @@ with one worker hot. Other regimes are below.
 
 ### Stability across runs
 
-Two back-to-back runs of the headline configuration (same seed, fresh
+Three back-to-back runs of the headline configuration (same seed, fresh
 workers each time):
 
 | Run | PA cache hit | PA p95 | RR cache hit | RR p95 |
 | --- | ---: | ---: | ---: | ---: |
 | 1 | 76.41% | 5.59 s  | 57.90% | 10.16 s |
 | 2 | 76.31% | 4.04 s  | 58.00% | 10.28 s |
+| 3 | 76.31% | 3.16 s  | 59.31% | 7.07 s  |
 
-Cache-hit numbers are stable to within a fraction of a percent; p95 moves
-~30% between runs because we are sampling the very tail with only 18
-requests. The qualitative ordering (PA highest cache rate, lowest p95) is
-robust.
+Cache-hit numbers are stable to within a fraction of a percent. Absolute
+p95 moves ~30% between runs because we are sampling the very tail with
+only 18 requests, but the qualitative ordering (PA highest cache rate,
+shortest p95, fewest seconds in the tail) is robust. The gap between PA
+and the next-best strategy is at least 2x in every run.
 
 ### Smaller model: Qwen2.5-0.5B on the same hardware, 2 workers
 

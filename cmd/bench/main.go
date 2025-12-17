@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -43,6 +44,7 @@ func run(args []string, stderr io.Writer) error {
 
 	mdPath := fs.String("markdown", "", "write Markdown report to this path")
 	jsonPath := fs.String("json", "", "write JSON summary to this path")
+	rawDir := fs.String("raw-results", "", "directory in which to write per-strategy JSONL of raw per-request results (one line per request)")
 	seed := fs.Int64("seed", 42, "trace seed")
 	sessions := fs.Int("sessions", 12, "trace sessions")
 	turns := fs.Int("turns", 6, "turns per session")
@@ -122,6 +124,11 @@ func run(args []string, stderr io.Writer) error {
 		}
 		s := trace.Summarise(st.name, results)
 		summaries = append(summaries, s)
+		if *rawDir != "" {
+			if err := writeResultsJSONL(*rawDir, st.name, results); err != nil {
+				return fmt.Errorf("%s raw results: %w", st.name, err)
+			}
+		}
 		_, _ = fmt.Fprintf(stderr, "  %s: hit=%5.2f%%  cache=%5.2f%%  ttft p50=%s p95=%s  rps=%.1f\n",
 			st.name, s.HitRate*100, s.CacheTokenRate*100, fmtDur(s.TTFT.P50), fmtDur(s.TTFT.P95), s.ThroughputRPS)
 	}
@@ -213,6 +220,28 @@ func runStrategyReal(name string, build func([]backend.Backend) router.Router, t
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	return rep.Replay(ctx, tr)
+}
+
+// writeResultsJSONL writes one Result per line to <dir>/<strategy>.jsonl.
+// The directory is created if missing.
+func writeResultsJSONL(dir, strategy string, results []trace.Result) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := dir + "/" + strategy + ".jsonl"
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	enc := json.NewEncoder(f)
+	enc.SetEscapeHTML(false)
+	for _, r := range results {
+		if err := enc.Encode(r); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // splitCSV trims and skips empty entries from a comma-separated string.
