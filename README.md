@@ -19,11 +19,12 @@ cache hit rate looks the same on a 1 B model as on a 70 B model, and the
 what KV caches save you from.
 
 This repository is a **reference implementation** that demonstrates the
-algorithm against (a) deterministic in-process backends for the algorithmic
-signal and (b) two real `llama-server` workers running Qwen2.5-0.5B on
-Apple M1 Pro for the actual KV-cache and TTFT behaviour. It is not a tuned
-production system, and it does not ship benchmarks against a multi-GPU
-production fleet. See "Limitations" below for what is and is not claimed.
+algorithm against (a) deterministic in-process backends for the
+algorithmic signal and (b) up to three real `llama-server` workers
+running Qwen2.5-0.5B and Qwen2.5-1.5B on a single Apple M1 Pro for the
+actual KV-cache and TTFT behaviour. It is not a tuned production system,
+and it does not ship benchmarks against a multi-GPU production fleet.
+See "Limitations" below for what is and is not claimed.
 
 ## What you get from this repo
 
@@ -35,12 +36,21 @@ production fleet. See "Limitations" below for what is and is not claimed.
   fuzz-tested against a brute-force oracle.
 - A safety valve that spills traffic away from saturated workers even
   when they would otherwise be the prefix-cache winner.
+- A per-backend circuit breaker that opens after consecutive 5xx /
+  transport failures and auto-resets after a cooldown; every strategy
+  filters unhealthy backends out of its candidate pool (ADR 0007).
 - A reproducible synthetic-trace generator (`cmd/gen-traces`) and a
   concurrent replay harness (`cmd/replay`) so the comparisons in
   `docs/results.md` can be regenerated end-to-end.
 - An in-process benchmark (`cmd/bench`) that runs all four strategies
-  against the same trace and emits a comparison report. No external
-  workers required.
+  against the same trace and emits a comparison report, plus an
+  orchestrated `bench/scripts/real-llm.sh` that runs the same comparison
+  against real `llama-server` workers (with fresh workers per strategy
+  to avoid KV-cache carryover) and a Python script that renders a
+  latency CDF.
+- Microbenchmarks (`go test -bench`) for `Router.Choose`: round-robin
+  is 8 ns / 0 allocs at N=2; even prefix-aware on a 4 KB prompt with 16
+  workers is ~9 us, vastly cheaper than the LLM call itself.
 
 ## Architecture (one screen)
 
@@ -169,6 +179,33 @@ of the routing signal, and the full methodology, see `docs/results.md`.
   prefill cost, which grows roughly linearly with model size. Concrete
   numbers depend on your hardware and model.
 
+## Future work
+
+Things I know are missing or could be tightened, in rough order of impact:
+
+- **Tokenizer-backed chunker.** Hash-of-bytes is correct but coarse. With
+  a per-model tokenizer plugged in (one extra dep, a small helper),
+  match boundaries would align with actual KV-cache boundaries. ADR 0006
+  documents the trade-off.
+- **Half-open one-probe circuit breaker.** The current breaker is
+  closed -> open -> closed. Adding a half-open probe state would
+  shed less traffic during recovery. Documented in ADR 0007 as a
+  deliberate simplification for small fleets.
+- **Admin endpoint for draining.** `POST /admin/drain?backend=w0` to
+  preemptively mark a worker unhealthy (for rolling restarts). Trivial
+  to add on top of the existing health gate.
+- **Larger N**. Every published benchmark uses 18-48 requests so the
+  harness reproduces in minutes on a laptop. A production benchmark
+  would use thousands of requests and report confidence intervals.
+- **vLLM and mlx-lm backends as first-class.** The Backend interface is
+  small enough that other OpenAI-compatible upstreams need only a new
+  constructor; only llama.cpp is exercised in the committed tests.
+- **Grafana dashboard JSON.** Metrics are emitted; a one-screen Grafana
+  dashboard would make them legible at a glance.
+- **Sticky-session affinity for non-prefix routers.** Even round-robin
+  could pin within a session for free; the trace generator already
+  carries SessionID for this. Not the project thesis, but a cheap win.
+
 ## Configuration
 
 `config/config.yaml` is the only required input. Every field can be
@@ -189,11 +226,14 @@ at first:
 
 ```text
 cmd/         router, replay, gen-traces, bench (CLI binaries)
-internal/    config, backend, prefixtree, router, proxy, metrics, logging,
+internal/    config, backend (incl. circuit breaker), prefixtree,
+             router (incl. microbenchmarks), proxy, metrics, logging,
              trace, integration (no production code, just E2E tests)
-docs/        architecture.md, benchmarks.md, results.md, decisions/ (ADRs)
+docs/        architecture.md, benchmarks.md, results.md, cdf.png,
+             decisions/ (seven ADRs)
 config/      default config.yaml
-bench/       scripts (results/ is gitignored)
+bench/scripts run.sh (in-process), real-llm.sh (orchestrator),
+             aggregate.go (results merger), plot.py (CDF renderer)
 .github/     ci workflow
 ```
 
