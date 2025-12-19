@@ -44,24 +44,45 @@ COLORS = {
 }
 
 
-def load_samples(jsonl_path: Path) -> tuple[list[float], list[float]]:
-    """Return (ttft_seconds, total_seconds) lists, skipping errored requests."""
+def load_samples(paths: list[Path]) -> tuple[list[float], list[float]]:
+    """Pool (ttft_seconds, total_seconds) across the given JSONL files."""
     ttft, total = [], []
-    with jsonl_path.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            row = json.loads(line)
-            if row.get("err"):
-                continue
-            t = row.get("ttft", 0)  # nanoseconds
-            o = row.get("total", 0)
-            if t > 0:
-                ttft.append(t / 1e9)
-            if o > 0:
-                total.append(o / 1e9)
+    for jsonl_path in paths:
+        with jsonl_path.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("err"):
+                    continue
+                t = row.get("ttft", 0)  # nanoseconds
+                o = row.get("total", 0)
+                if t > 0:
+                    ttft.append(t / 1e9)
+                if o > 0:
+                    total.append(o / 1e9)
     return ttft, total
+
+
+def discover(in_dir: Path, strategy: str) -> list[Path]:
+    """Find every <strategy>.jsonl under in_dir.
+
+    Supports two layouts:
+      <in_dir>/<strategy>.jsonl                           (single-run)
+      <in_dir>/raw/<strategy>.jsonl                       (single-run via real-llm.sh)
+      <in_dir>/raw-run*/<strategy>.jsonl                  (multi-run via real-llm.sh)
+    """
+    out = []
+    direct = in_dir / f"{strategy}.jsonl"
+    if direct.exists():
+        out.append(direct)
+    for sub in sorted(in_dir.glob("raw*")):
+        if sub.is_dir():
+            cand = sub / f"{strategy}.jsonl"
+            if cand.exists():
+                out.append(cand)
+    return out
 
 
 def plot_cdf(ax, samples: list[float], label: str, color: str) -> None:
@@ -91,12 +112,15 @@ def main() -> int:
 
     available: dict[str, tuple[list[float], list[float]]] = {}
     for strat in STRATEGIES:
-        path = in_dir / f"{strat}.jsonl"
-        if path.exists():
-            available[strat] = load_samples(path)
+        paths = discover(in_dir, strat)
+        if paths:
+            available[strat] = load_samples(paths)
     if not available:
-        sys.stderr.write(f"no <strategy>.jsonl files in {in_dir}\n")
+        sys.stderr.write(f"no <strategy>.jsonl files under {in_dir}\n")
         return 1
+    # Print a one-line summary per strategy so callers see what got pooled.
+    for strat, (ttft, _) in available.items():
+        sys.stderr.write(f"  {strat}: {len(ttft)} TTFT samples\n")
 
     fig, (ax_ttft, ax_total) = plt.subplots(1, 2, figsize=(12, 5))
 

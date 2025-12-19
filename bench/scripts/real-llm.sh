@@ -32,6 +32,14 @@ SYS_LEN="${SYS_LEN:-512}"
 CODE_LEN="${CODE_LEN:-0}"
 MAX_TOKENS="${MAX_TOKENS:-16}"
 CTX_SIZE="${CTX_SIZE:-4096}"
+# RUNS controls multi-seed averaging. Each (strategy, run) combo gets its
+# own fresh worker boot. Output JSONs are suffixed -run<N> so the
+# aggregator can compute CIs across runs.
+RUNS="${RUNS:-1}"
+# SATURATION lets the orchestrator pass a non-default saturation_inflight
+# to the prefix-aware strategy without editing the bench binary; useful
+# for the safety-valve ablation in bench/scripts/ablate-saturation.sh.
+SATURATION="${SATURATION:-}"
 
 OUT_DIR="bench/results"
 mkdir -p "$OUT_DIR"
@@ -91,32 +99,59 @@ for port in $WORKER_PORTS; do
 done
 
 for strat in roundrobin random leastloaded prefixaware; do
-  echo "=== $strat ==="
-  stop_workers
-  start_workers
+  for run in $(seq 1 "$RUNS"); do
+    suffix=""
+    rawdir="$OUT_DIR/raw"
+    if [ "$RUNS" -gt 1 ]; then
+      suffix="-run$run"
+      rawdir="$OUT_DIR/raw$suffix"
+    fi
+    seed=$((SEED + run - 1))
+    echo "=== $strat run=$run seed=$seed ==="
+    stop_workers
+    start_workers
 
-  bin/bench \
-    --real "$REAL" \
-    --strategy "$strat" \
-    --seed "$SEED" \
-    --sessions "$SESSIONS" \
-    --turns "$TURNS" \
-    --system-len "$SYS_LEN" \
-    --code-context-len "$CODE_LEN" \
-    --max-tokens "$MAX_TOKENS" \
-    --json "$OUT_DIR/real-$strat.json" \
-    --raw-results "$OUT_DIR/raw"
+    extra_args=""
+    if [ -n "$SATURATION" ] && [ "$strat" = "prefixaware" ]; then
+      extra_args="--saturation-inflight $SATURATION"
+    fi
+
+    # shellcheck disable=SC2086
+    bin/bench \
+      --real "$REAL" \
+      --strategy "$strat" \
+      --seed "$seed" \
+      --sessions "$SESSIONS" \
+      --turns "$TURNS" \
+      --system-len "$SYS_LEN" \
+      --code-context-len "$CODE_LEN" \
+      --max-tokens "$MAX_TOKENS" \
+      --json "$OUT_DIR/real-$strat$suffix.json" \
+      --raw-results "$rawdir" \
+      $extra_args
+  done
 done
 
 stop_workers
 
-# Merge the four single-strategy JSONs into one Markdown using a tiny inline Go.
-go run ./bench/scripts/aggregate.go \
-  "$OUT_DIR"/real-roundrobin.json \
-  "$OUT_DIR"/real-random.json \
-  "$OUT_DIR"/real-leastloaded.json \
-  "$OUT_DIR"/real-prefixaware.json \
-  > "$OUT_DIR/real.md"
+# Aggregate. When RUNS=1 the layout matches the original single-run report.
+# When RUNS>1 the aggregator computes mean and stddev across runs per
+# strategy.
+if [ "$RUNS" -eq 1 ]; then
+  go run ./bench/scripts/aggregate.go \
+    "$OUT_DIR"/real-roundrobin.json \
+    "$OUT_DIR"/real-random.json \
+    "$OUT_DIR"/real-leastloaded.json \
+    "$OUT_DIR"/real-prefixaware.json \
+    > "$OUT_DIR/real.md"
+else
+  go run ./bench/scripts/aggregate.go --multi \
+    "$OUT_DIR"/real-roundrobin-run*.json \
+    "$OUT_DIR"/real-random-run*.json \
+    "$OUT_DIR"/real-leastloaded-run*.json \
+    "$OUT_DIR"/real-prefixaware-run*.json \
+    > "$OUT_DIR/real.md"
+fi
 
 echo
 echo "wrote $OUT_DIR/real.md and $OUT_DIR/real-*.json"
