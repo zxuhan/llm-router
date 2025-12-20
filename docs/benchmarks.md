@@ -77,15 +77,46 @@ Outputs:
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `MODEL` | `models/qwen2.5-0.5b.gguf` | path to the GGUF |
-| `PORT_W0`, `PORT_W1` | 8001, 8002 | worker ports |
+| `WORKER_PORTS` | `"8001 8002"` | space-separated list, accepts `N >= 2` |
 | `SEED` | 42 | RNG seed for trace generation |
 | `SESSIONS` | 8 | distinct sessions in the trace |
 | `TURNS` | 4 | turns per session |
 | `SYS_LEN` | 512 | shared system-prompt length in chars |
 | `CODE_LEN` | 0 | per-session code-context length (0 disables) |
 | `MAX_TOKENS` | 16 | upstream `max_tokens`; small to keep runs fast |
+| `RUNS` | 1 | when > 1, runs each strategy N times with different seeds and emits mean ± stddev across runs |
+| `CTX_SIZE` | 4096 | llama-server context size |
 
-### 4. If you need a long-running router process
+### 4. Multi-seed mode (recommended for headline numbers)
+
+```bash
+RUNS=3 SESSIONS=6 TURNS=3 SYS_LEN=2048 MAX_TOKENS=8 SEED=17 \
+  bash bench/scripts/real-llm.sh
+```
+
+The aggregator picks up `--multi` automatically when `RUNS>1` and writes
+a report with mean ± stddev for hit-rate, KV-cached, TTFT p50/p95/p99,
+and RPS, plus a per-run detail table. Pool the raw per-request samples
+into a single CDF with:
+
+```bash
+python3 bench/scripts/plot.py --input bench/results --out docs/cdf.png
+```
+
+### 5. Safety-valve ablation
+
+```bash
+SAT_VALUES="1 4 8 9999" bash bench/scripts/ablate-saturation.sh
+```
+
+Runs `prefixaware` four times with different `saturation_inflight`
+values on the same trace, fresh workers per value. Output is a small
+table in `bench/results/ablation/abl-sat.md` showing the cache-vs-load
+tradeoff: tight saturation favours load distribution but hurts cache
+reuse; loose saturation maximises cache reuse but bottlenecks throughput
+on a single hot worker.
+
+### 6. If you need a long-running router process
 
 The orchestrator script bypasses `cmd/router` and runs the routing
 in-process via `httptest`, because that's the fastest cycle for a
