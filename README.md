@@ -88,6 +88,9 @@ No model file? `bash bench/scripts/run.sh` runs the full comparison against
 in-process fakes. The hit-rate signal is algorithmic and survives the
 substitution.
 
+**Production-scale reproduction** (4× A100 + vLLM + Qwen2.5-7B on a rented
+GPU pod, ~$10 of cloud cost): see [docs/cloud-bench.md](docs/cloud-bench.md).
+
 ---
 
 ## How it works
