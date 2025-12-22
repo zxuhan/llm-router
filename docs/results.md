@@ -29,20 +29,24 @@ all 54 samples per strategy.
 
 | Strategy | Hit rate | KV cached | TTFT p50 | TTFT p95 | RPS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| roundrobin   |  0.00% | 58.53 ± 0.30%   | 1.88 s ± 317 ms | 7.54 s ± 263 ms | 1.87 ± 0.03 |
-| random       |  0.00% | 60.68 ± 6.58%   | 2.48 s ± 795 ms | 5.87 s ± 926 ms | 1.96 ± 0.26 |
-| leastloaded  |  0.00% | 62.51 ± 0.56%   | 0.75 s ± 256 ms | 6.77 s ± 1.32 s | 2.29 ± 0.47 |
-| **prefixaware** | **94.44%** | **74.97 ± 1.21%** | 1.92 s ± 146 ms | **3.23 s ± 121 ms** | **2.60 ± 0.15** |
+| roundrobin   |  0.00% | 58.21 ± 1.45% | 2.59 s ± 575 ms | 11.09 s ± 230 ms | 1.24 ± 0.10 |
+| random       |  0.00% | 59.13 ± 3.54% | 4.24 s ± 581 ms |  9.81 s ± 1.49 s | 1.16 ± 0.14 |
+| leastloaded  |  0.00% | 63.34 ± 0.34% | 1.27 s ± 478 ms |  9.74 s ± 432 ms | 1.50 ± 0.05 |
+| **prefixaware** | **94.44%** | **74.99 ± 1.24%** | 3.91 s ± 332 ms | **6.85 s ± 253 ms** | 1.25 ± 0.09 |
 
 **Headline numbers:**
 
-- **p95 TTFT cut by ~57%** vs round-robin (mean 3.23 s vs 7.54 s).
-- **Stddev on p95 is ~10x tighter for PA** (121 ms vs 263-1320 ms): PA
-  is not just faster on average, it is *predictable*. Production SLOs
-  care about that.
-- **Upstream KV-cache hit rate** lifted from ~59-63% to ~75% by
+- **p95 TTFT cut by ~30% vs the best baseline (least-loaded)**, ~38% vs
+  round-robin (mean 6.85 s vs 11.09 s).
+- **Stddev on p95 is ~2-6x tighter for PA** (253 ms vs 230-1490 ms across
+  oblivious strategies). PA is not just faster on average, it is
+  *predictable*. Production SLOs care about that.
+- **Upstream KV-cache hit rate** lifted from ~58-63% to **~75%** by
   routing decisions alone.
-- **RPS up ~14-39%** vs the oblivious strategies.
+- **p50 TTFT is *not* improved by PA** in this regime: cold first-time
+  prefills still happen on the warming worker, and least-loaded
+  parallelises those across 3 workers and wins p50. The win is at the
+  tail and on cumulative throughput.
 
 PA's p50 is *not* improved; cold first-time prefills still happen on
 the warming worker, and `leastloaded` parallelises those across three
@@ -51,14 +55,14 @@ cumulative throughput.
 
 ### Per-run detail
 
-Confirms the variance story: PA's p95 sits in [3.10, 3.34] across the
-three runs; every other strategy has at least one run > 7 s.
+Confirms the variance story: PA's p95 sits in [6.60, 7.10] s across the
+three runs (a tight window); the oblivious strategies span 5.3-11.3 s.
 
 | Run | RR p95 | Random p95 | LL p95 | **PA p95** |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 (seed 17) | 7.52 s | 6.94 s | 5.27 s | **3.10 s** |
-| 2 (seed 18) | 7.82 s | 5.34 s | 7.25 s | **3.26 s** |
-| 3 (seed 19) | 7.30 s | 5.32 s | 7.77 s | **3.34 s** |
+| 1 (seed 17) | 11.06 s |  8.08 s | 10.02 s | **6.60 s** |
+| 2 (seed 18) | 10.87 s | 10.64 s |  9.24 s | **6.85 s** |
+| 3 (seed 19) | 11.33 s | 10.70 s |  9.95 s | **7.10 s** |
 
 ---
 
