@@ -16,7 +16,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/xzhou/llm-router/internal/proxy"
+	"github.com/zxuhan/llm-router/internal/proxy"
 )
 
 // New returns a *slog.Logger configured for the given level and format.

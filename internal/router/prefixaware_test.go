@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xzhou/llm-router/internal/backend"
+	"github.com/zxuhan/llm-router/internal/backend"
 )
 
 func TestPrefixAware_PinsToWorkerWithLongestMatch(t *testing.T) {

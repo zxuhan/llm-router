@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xzhou/llm-router/internal/proxy"
+	"github.com/zxuhan/llm-router/internal/proxy"
 )
 
 func TestNew_AllLevels(t *testing.T) {

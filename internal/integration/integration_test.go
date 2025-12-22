@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xzhou/llm-router/internal/backend"
-	"github.com/xzhou/llm-router/internal/proxy"
-	"github.com/xzhou/llm-router/internal/router"
-	"github.com/xzhou/llm-router/internal/trace"
+	"github.com/zxuhan/llm-router/internal/backend"
+	"github.com/zxuhan/llm-router/internal/proxy"
+	"github.com/zxuhan/llm-router/internal/router"
+	"github.com/zxuhan/llm-router/internal/trace"
 )
 
 // makeStreamingHandler returns an http.HandlerFunc that emits a few SSE

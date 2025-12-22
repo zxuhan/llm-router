@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xzhou/llm-router/internal/backend"
-	"github.com/xzhou/llm-router/internal/router"
+	"github.com/zxuhan/llm-router/internal/backend"
+	"github.com/zxuhan/llm-router/internal/router"
 )
 
 func newTwoBackendHandler(t *testing.T) (*Handler, *backend.FakeServer, *backend.FakeServer, []backend.Backend) {

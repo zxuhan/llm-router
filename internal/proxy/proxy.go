@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xzhou/llm-router/internal/backend"
-	"github.com/xzhou/llm-router/internal/router"
+	"github.com/zxuhan/llm-router/internal/backend"
+	"github.com/zxuhan/llm-router/internal/router"
 )
 
 // PromptExtractor pulls a routing-relevant string out of a request body. The

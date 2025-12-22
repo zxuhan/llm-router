@@ -4,7 +4,7 @@ import (
 	"context"
 	"math/rand/v2"
 
-	"github.com/xzhou/llm-router/internal/backend"
+	"github.com/zxuhan/llm-router/internal/backend"
 )
 
 // Random picks a backend uniformly at random per request. Like RoundRobin it

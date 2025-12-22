@@ -19,7 +19,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/xzhou/llm-router/internal/trace"
+	"github.com/zxuhan/llm-router/internal/trace"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/xzhou/llm-router
+module github.com/zxuhan/llm-router
 
 go 1.23.0
 

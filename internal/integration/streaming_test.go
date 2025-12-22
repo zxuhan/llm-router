@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xzhou/llm-router/internal/backend"
-	"github.com/xzhou/llm-router/internal/proxy"
-	"github.com/xzhou/llm-router/internal/router"
+	"github.com/zxuhan/llm-router/internal/backend"
+	"github.com/zxuhan/llm-router/internal/proxy"
+	"github.com/zxuhan/llm-router/internal/router"
 )
 
 // TestStreaming_ChunksDeliveredIncrementally drives a backend that emits SSE

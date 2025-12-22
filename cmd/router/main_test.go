@@ -3,9 +3,9 @@ package main
 import (
 	"testing"
 
-	"github.com/xzhou/llm-router/internal/backend"
-	"github.com/xzhou/llm-router/internal/config"
-	"github.com/xzhou/llm-router/internal/proxy"
+	"github.com/zxuhan/llm-router/internal/backend"
+	"github.com/zxuhan/llm-router/internal/config"
+	"github.com/zxuhan/llm-router/internal/proxy"
 )
 
 func TestBuildBackends_HappyPath(t *testing.T) {

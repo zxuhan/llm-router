@@ -4,8 +4,8 @@ import (
 	"context"
 	"sort"
 
-	"github.com/xzhou/llm-router/internal/backend"
-	"github.com/xzhou/llm-router/internal/prefixtree"
+	"github.com/zxuhan/llm-router/internal/backend"
+	"github.com/zxuhan/llm-router/internal/prefixtree"
 )
 
 // PrefixAware is the headline strategy: each backend has its own radix tree

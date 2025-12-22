@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xzhou/llm-router/internal/prefixtree"
-	"github.com/xzhou/llm-router/internal/proxy"
+	"github.com/zxuhan/llm-router/internal/prefixtree"
+	"github.com/zxuhan/llm-router/internal/proxy"
 )
 
 func TestRegistry_RecorderProducesScrapeLines(t *testing.T) {

@@ -21,8 +21,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/xzhou/llm-router/internal/prefixtree"
-	"github.com/xzhou/llm-router/internal/proxy"
+	"github.com/zxuhan/llm-router/internal/prefixtree"
+	"github.com/zxuhan/llm-router/internal/proxy"
 )
 
 // Registry bundles every metric the router emits.

@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xzhou/llm-router/internal/trace"
+	"github.com/zxuhan/llm-router/internal/trace"
 )
 
 func main() {
