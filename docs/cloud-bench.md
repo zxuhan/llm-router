@@ -11,6 +11,32 @@ tokens-per-second.
 
 ---
 
+## Before you click "Deploy" on RunPod
+
+Have these ready on your laptop so you don't waste pod time:
+
+- [ ] **SSH key**: `~/.ssh/id_ed25519.pub` exists (`ssh-keygen -t ed25519` if not). The pubkey will go into RunPod's SSH key field; the private key stays on your laptop. Without this you're stuck in Jupyter and can't `scp`.
+- [ ] **The repo is on GitHub at `https://github.com/zxuhan/llm-router`** so the pod can `git clone` it.
+- [ ] **An SSH config entry** (optional but nice): once you have the pod, add to `~/.ssh/config`:
+  ```
+  Host runpod
+    HostName <pod-host-from-runpod-ui>
+    Port <pod-port-from-runpod-ui>
+    User root
+    IdentityFile ~/.ssh/id_ed25519
+  ```
+  Then `ssh runpod` and `scp -r runpod:/root/llm-router/bench/results .` Just Work.
+- [ ] **Local matplotlib venv** for re-rendering figures after scp:
+  ```bash
+  python3 -m venv /tmp/plot-venv && /tmp/plot-venv/bin/pip install matplotlib --quiet
+  ```
+
+Total time on the pod (with all of the above prepared): ~75-90 minutes,
+~$8-12 spent. Without these prepared first, expect to lose 20-30 minutes
+fumbling on a billed clock.
+
+---
+
 ## 1. Rent the pod
 
 Recommended:
@@ -96,33 +122,81 @@ When the script finishes you'll see a clear banner:
 
 ## 5. Copy results back to your laptop
 
-The banner will print the exact `scp` command. Roughly:
+**Step 5a: get your pod's SSH host and port from the RunPod dashboard.**
 
-```bash
-# from your laptop:
-scp -P <pod-port> -r root@<pod-host>:/root/llm-router/bench/results ./bench-results-cloud
+In the RunPod web UI: your pod page > "Connect" button > look for the
+`ssh root@... -p <port>` snippet. Copy the host and port.
+
+It usually looks like one of:
+
+```
+ssh root@213.181.122.5 -p 22013       # IP + non-22 port
+ssh <pod-id>@ssh.runpod.io -p 22      # SSH proxy variant
 ```
 
-The `bench/results` directory contains:
-
-- `real.md`: the multi-seed Markdown report (mean ± stddev table + per-run breakdown)
-- `real-*.json`: per-strategy summary JSONs (input to the aggregator)
-- `raw-run*/<strategy>.jsonl`: per-request raw timings (input to the plot scripts)
-
-Each is small (a few hundred KB total). The transfer takes seconds.
-
-## 6. Regenerate the figures locally
+**Step 5b: run scp from your laptop** (NOT inside the pod). The bench
+script's banner prints the exact line; it looks like:
 
 ```bash
-# on your laptop, in the repo root:
-python3 bench/scripts/hero.py --input bench-results-cloud --out docs/hero.png
-python3 bench/scripts/plot.py --input bench-results-cloud --out docs/cdf.png
+# replace <pod-host> and <pod-ssh-port> with what RunPod gave you
+scp -P <pod-ssh-port> -r root@<pod-host>:/root/llm-router/bench/results ./bench-results-cloud
+```
+
+If RunPod gave you a `<pod-id>@ssh.runpod.io` style address, use that
+form instead:
+
+```bash
+scp -P <pod-ssh-port> -r <pod-id>@ssh.runpod.io:/root/llm-router/bench/results ./bench-results-cloud
+```
+
+Total transfer is small (~100-500 KB across all JSONLs + the report).
+Takes seconds.
+
+**Step 5c: verify the results actually arrived.**
+
+```bash
+ls bench-results-cloud/real.md           # must exist
+cat bench-results-cloud/real.md | head -15   # must show all 4 strategies
+ls bench-results-cloud/raw-run*/prefixaware.jsonl   # one per seed
+```
+
+Only after these three commands succeed are you safe to terminate the
+pod (terminate destroys the pod's disk; anything you didn't copy is
+gone forever).
+
+## 6. Regenerate the figures and commit
+
+These all run on your laptop, in the repo root, with the local
+matplotlib venv from earlier:
+
+```bash
+# regenerate the headline visuals from cloud data
+python3 bench/scripts/hero.py --input bench-results-cloud --out docs/hero-cloud.png
+python3 bench/scripts/plot.py --input bench-results-cloud --out docs/cdf-cloud.png
+
+# move the multi-seed Markdown report into docs/
 cp bench-results-cloud/real.md docs/results-cloud.md
 
-git add docs/hero.png docs/cdf.png docs/results-cloud.md bench-results-cloud
-git commit -m "bench: cloud results on 4xA100 + Qwen2.5-7B + vLLM"
+# commit + push
+git add docs/hero-cloud.png docs/cdf-cloud.png docs/results-cloud.md
+git commit -m "bench: cloud results on 4× GPU + vLLM + Qwen2.5-7B"
 git push
 ```
+
+The cloud results live alongside the local ones (`docs/hero.png`,
+`docs/cdf.png`, `docs/results.md`) rather than overwriting them. You
+can decide later which set the README's hero should point at; my
+suggestion is to swap the README hero to `docs/hero-cloud.png` once
+you have the cloud numbers (the local M1 Pro numbers stay around as a
+"smaller-scale reproducibility" reference).
+
+> **Heads-up:** if the matplotlib venv from your earlier local runs is
+> gone, recreate it with:
+>
+> ```bash
+> python3 -m venv /tmp/plot-venv && /tmp/plot-venv/bin/pip install matplotlib --quiet
+> /tmp/plot-venv/bin/python bench/scripts/hero.py --input bench-results-cloud --out docs/hero-cloud.png
+> ```
 
 ## 7. Terminate the pod
 

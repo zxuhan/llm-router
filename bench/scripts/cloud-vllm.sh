@@ -8,31 +8,42 @@
 # Pre-reqs: bash scripts/install-cloud.sh (Go, vLLM, model already there).
 #
 # What it does:
-#   1. For each GPU index, launch `vllm serve <MODEL_DIR>` on port 800{i}
-#      with --enable-prefix-caching pinned via CUDA_VISIBLE_DEVICES.
-#   2. Wait for every worker's /health to respond.
-#   3. Run bench/scripts/real-llm.sh (the existing multi-seed orchestrator)
-#      with WORKER_PORTS= matching what we just booted.
-#   4. Tear down workers, print the SCP command and a SAFE-TO-TERMINATE banner.
+#   1. Preflight: nvidia-smi, vllm import, go on PATH all check out.
+#   2. For each GPU index i, launch vLLM on port 800{i+1} with
+#      --enable-prefix-caching, --served-model-name fake-model
+#      (so the trace's "fake-model" requests are accepted), pinned via
+#      CUDA_VISIBLE_DEVICES=i.
+#   3. Wait for every worker's /health.
+#   4. Warm each worker once with a unique throwaway prompt so the first
+#      bench request isn't paying CUDA-kernel-JIT cost on top of cold
+#      prefill (we want to measure cold *prefill*, not cold compile).
+#   5. Run the multi-seed bench (3 seeds x 4 strategies, fresh workers
+#      per (strategy, run) so KV caches start empty).
+#   6. Tear down workers, write Markdown report, print the SCP command and
+#      a SAFE-TO-TERMINATE banner.
 #
 # Tunables (env):
-#   MODEL_DIR    default models/qwen2.5-7b
-#   N_WORKERS    default = $(nvidia-smi -L | wc -l)
-#   START_PORT   default 8001
-#   GPU_MEM_UTIL default 0.90
+#   MODEL_DIR     default models/qwen2.5-7b
+#   N_WORKERS     default = $(nvidia-smi -L | wc -l)
+#   START_PORT    default 8001
+#   GPU_MEM_UTIL  default 0.90
 #   MAX_MODEL_LEN default 8192
-#   RUNS         default 3 (passed to bench/scripts/real-llm.sh)
-#   SESSIONS     default 12
-#   TURNS        default 4
-#   SYS_LEN      default 2048
-#   MAX_TOKENS   default 16
-#   SEED         default 17
-#   OUT_DIR      default bench/results
+#   RUNS          default 3
+#   SESSIONS      default 12
+#   TURNS         default 4
+#   SYS_LEN       default 2048
+#   MAX_TOKENS    default 16
+#   SEED          default 17
+#   OUT_DIR       default bench/results
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+
+# Make sure Go is on PATH even in a fresh non-login shell (install-cloud.sh
+# wrote this to ~/.bashrc but the current shell may not have re-sourced).
+export PATH="/usr/local/go/bin:${PATH}"
 
 MODEL_DIR="${MODEL_DIR:-models/qwen2.5-7b}"
 N_WORKERS="${N_WORKERS:-$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')}"
@@ -48,37 +59,39 @@ MAX_TOKENS="${MAX_TOKENS:-16}"
 SEED="${SEED:-17}"
 OUT_DIR="${OUT_DIR:-bench/results}"
 
-if [ ! -f "${MODEL_DIR}/config.json" ]; then
-  echo "ERROR: model not found at ${MODEL_DIR}" >&2
-  echo "Run scripts/install-cloud.sh first." >&2
-  exit 1
-fi
+# vLLM has to advertise the same model name the trace generator uses,
+# otherwise it 404s every request.
+SERVED_MODEL_NAME="fake-model"
 
-if [ "${N_WORKERS}" -lt 2 ]; then
-  echo "ERROR: need at least 2 GPUs; nvidia-smi sees ${N_WORKERS}" >&2
-  exit 1
-fi
+log() { printf "\n[cloud-bench] %s\n" "$*"; }
+fail() { echo "ERROR: $*" >&2; exit 1; }
+
+# ---- preflight -------------------------------------------------------------
+log "preflight"
+command -v nvidia-smi >/dev/null || fail "nvidia-smi not found; is this a GPU pod?"
+command -v go >/dev/null || fail "go not found on PATH; rerun scripts/install-cloud.sh"
+python3 -c "import vllm" 2>/dev/null || fail "vllm not importable; rerun scripts/install-cloud.sh"
+[ -f "${MODEL_DIR}/config.json" ] || fail "model not found at ${MODEL_DIR}; rerun scripts/install-cloud.sh"
+[ -x bin/bench ] || fail "bin/bench not built; run: make build"
+[ "${N_WORKERS}" -ge 2 ] || fail "need >= 2 GPUs; nvidia-smi sees ${N_WORKERS}"
 
 mkdir -p "${OUT_DIR}/raw" /tmp/vllm-logs
 rm -rf "${OUT_DIR}"/raw* "${OUT_DIR}"/real-*.json "${OUT_DIR}"/real.md
 
-log() { printf "\n[cloud-bench] %s\n" "$*"; }
-
-# WORKER_PORTS string used by bench/scripts/real-llm.sh
 ports=()
 for i in $(seq 0 $((N_WORKERS - 1))); do
   ports+=( $((START_PORT + i)) )
 done
-WORKER_PORTS="${ports[*]}"
-log "will run with N=${N_WORKERS} workers on ports: ${WORKER_PORTS}"
+log "will run with N=${N_WORKERS} workers on ports: ${ports[*]}"
 
-# vLLM bootstrap helper (used by real-llm.sh via the env hook below)
+# ---- worker management -----------------------------------------------------
 boot_vllm_workers() {
   local i=0
   for port in "${ports[@]}"; do
     CUDA_VISIBLE_DEVICES="$i" \
       python3 -m vllm.entrypoints.openai.api_server \
         --model "${MODEL_DIR}" \
+        --served-model-name "${SERVED_MODEL_NAME}" \
         --port "${port}" \
         --enable-prefix-caching \
         --gpu-memory-utilization "${GPU_MEM_UTIL}" \
@@ -91,6 +104,7 @@ boot_vllm_workers() {
 }
 
 stop_vllm_workers() {
+  # Kill recorded PIDs first.
   for pidfile in /tmp/vllm-logs/w*.pid; do
     [ -f "$pidfile" ] || continue
     pid=$(cat "$pidfile" 2>/dev/null || true)
@@ -104,29 +118,42 @@ stop_vllm_workers() {
     fi
     rm -f "$pidfile"
   done
+  # vLLM spawns helper processes; reap any orphans by name.
+  pkill -9 -f "vllm.entrypoints.openai.api_server" 2>/dev/null || true
+  # Free GPU memory before next boot.
+  sleep 2
 }
+trap stop_vllm_workers EXIT
 
 wait_for_health() {
   for port in "${ports[@]}"; do
-    log "waiting for worker on :${port} ..."
+    log "waiting for worker on :${port}"
     for _ in $(seq 1 600); do
       if curl -fs "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then break; fi
       sleep 1
     done
     if ! curl -fs "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-      echo "ERROR: worker on :${port} never became healthy. See /tmp/vllm-logs/" >&2
+      echo "worker on :${port} never became healthy. Last 30 log lines:" >&2
       tail -30 "/tmp/vllm-logs/w$((port - START_PORT)).log" >&2 || true
-      stop_vllm_workers
       exit 1
     fi
   done
 }
 
-# real-llm.sh boots its own workers (llama-server). For vLLM we override
-# its start_workers/stop_workers by exporting them BEFORE invoking it. The
-# script reads them via `declare -F`, but the simplest approach: we just
-# manage workers HERE and call cmd/bench directly with --real, mirroring
-# what real-llm.sh does internally.
+# Pre-warm CUDA kernels on each worker with a UNIQUE prompt per worker, so
+# the cold-prefill measurements in the bench measure prefill, not JIT.
+warmup_workers() {
+  local i=0
+  local seed_phrase
+  for port in "${ports[@]}"; do
+    seed_phrase="warmup-w${i}-$(date +%s%N)"
+    curl -fs -X POST "http://127.0.0.1:${port}/v1/chat/completions" \
+      -H 'Content-Type: application/json' \
+      -d "{\"model\":\"${SERVED_MODEL_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"${seed_phrase}\"}],\"max_tokens\":1}" \
+      >/dev/null 2>&1 || true
+    i=$((i + 1))
+  done
+}
 
 REAL=""
 for port in "${ports[@]}"; do
@@ -136,14 +163,15 @@ done
 
 # ---- multi-seed bench ------------------------------------------------------
 log "running ${RUNS} seeds x 4 strategies (fresh vLLM workers per (strategy, run))"
+START_TIME=$(date +%s)
 for strat in roundrobin random leastloaded prefixaware; do
   for run in $(seq 1 "${RUNS}"); do
     seed=$((SEED + run - 1))
     log "=== ${strat}  run=${run}  seed=${seed} ==="
     stop_vllm_workers
-    sleep 2
     boot_vllm_workers
     wait_for_health
+    warmup_workers
 
     suffix="-run${run}"
     rawdir="${OUT_DIR}/raw${suffix}"
@@ -160,6 +188,8 @@ for strat in roundrobin random leastloaded prefixaware; do
   done
 done
 stop_vllm_workers
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
 
 # ---- aggregate -------------------------------------------------------------
 log "aggregating multi-seed report"
@@ -171,29 +201,49 @@ go run ./bench/scripts/aggregate.go --multi \
   > "${OUT_DIR}/real.md"
 
 # ---- pull-back instructions ------------------------------------------------
+ABS_OUT="$(cd "${OUT_DIR}" && pwd)"
+PUBLIC_IP="$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null || echo '<pod-host>')"
+
 cat <<EOF
 
 ================================================================================
   ✅  DONE  --  bench finished cleanly. SAFE TO TERMINATE THE POD AFTER scp.
 ================================================================================
 
-Headline report:   ${OUT_DIR}/real.md
-Per-strategy JSON: ${OUT_DIR}/real-*.json
-Per-request JSONL: ${OUT_DIR}/raw-run*/
+   wall time : ${ELAPSED}s
+   workers   : ${N_WORKERS} vLLM × ${SERVED_MODEL_NAME} on ${MODEL_DIR}
+   trace     : ${RUNS} runs × ${SESSIONS} sessions × ${TURNS} turns = $((RUNS * SESSIONS * TURNS * 4)) total requests across 4 strategies
+   results   : ${ABS_OUT}/
 
-To copy results back to your laptop, run THIS on YOUR LAPTOP (not on the pod):
+PRE-FLIGHT CHECKS (do all THREE before terminating):
 
-  scp -P <pod-ssh-port> -r root@<pod-host>:${ROOT}/${OUT_DIR} ./bench-results-cloud
+   1. cat ${OUT_DIR}/real.md | head -20
+      -> table must show all 4 strategies; PA's KV-cached number should
+         be the highest in the column.
 
-Then on your laptop, regenerate the figures + commit:
+   2. ls ${OUT_DIR}/raw-run*/prefixaware.jsonl
+      -> 3 files (one per seed), each with 18+ JSONL lines.
 
-  python3 bench/scripts/hero.py --input bench-results-cloud --out docs/hero.png
-  python3 bench/scripts/plot.py --input bench-results-cloud --out docs/cdf.png
-  cp bench-results-cloud/real.md docs/results-cloud.md
+   3. SCP the directory to your laptop and verify it arrived:
+      RUN ON YOUR LAPTOP (not the pod):
 
-Once results are safely on your laptop:
-  - RunPod web dashboard -> your pod -> "Stop" or "Terminate"
-  - or: runpodctl stop pod <pod-id>
+         scp -P <pod-ssh-port> -r root@${PUBLIC_IP}:${ABS_OUT} ./bench-results-cloud
+         ls bench-results-cloud/real.md   # must exist locally
+
+ON YOUR LAPTOP, AFTER SCP:
+
+   python3 bench/scripts/hero.py  --input bench-results-cloud --out docs/hero-cloud.png
+   python3 bench/scripts/plot.py  --input bench-results-cloud --out docs/cdf-cloud.png
+   cp bench-results-cloud/real.md docs/results-cloud.md
+
+   git add docs/hero-cloud.png docs/cdf-cloud.png docs/results-cloud.md
+   git commit -m "bench: cloud results on ${N_WORKERS}× GPU + vLLM + ${SERVED_MODEL_NAME}"
+   git push
+
+THEN terminate the pod:
+
+   - RunPod web dashboard -> your pod -> Terminate (NOT 'Stop'; Stop keeps disk billed)
+   - or: runpodctl stop pod <pod-id>
 
 ================================================================================
 EOF
