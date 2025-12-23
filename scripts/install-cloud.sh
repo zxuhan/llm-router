@@ -51,11 +51,15 @@ export PATH="/usr/local/go/bin:${PATH}"
 if ! python3 -c "import vllm" 2>/dev/null; then
   log "installing vLLM ${VLLM_VERSION}"
   pip install --upgrade pip --quiet
-  pip install --quiet "vllm==${VLLM_VERSION}" "huggingface_hub[hf_transfer]"
+  # huggingface_hub 1.x dropped the [hf_transfer] extra; install it as a
+  # separate package and rely on HF_HUB_ENABLE_HF_TRANSFER=1 below.
+  pip install --quiet "vllm==${VLLM_VERSION}" "huggingface_hub" "hf_transfer"
 else
   installed=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo unknown)
   log "vLLM already installed: ${installed}"
 fi
+# Make sure hf_transfer is present even if vllm install was skipped.
+python3 -c "import hf_transfer" 2>/dev/null || pip install --quiet hf_transfer
 export HF_HUB_ENABLE_HF_TRANSFER=1
 
 # 3. Build router ------------------------------------------------------------
@@ -68,10 +72,10 @@ if [ -f "${MODEL_DIR}/config.json" ]; then
   log "model already present at ${MODEL_DIR}; skipping download"
 else
   log "downloading ${MODEL_ID} -> ${MODEL_DIR}"
-  huggingface-cli download "${MODEL_ID}" \
-    --local-dir "${MODEL_DIR}" \
-    --local-dir-use-symlinks False \
-    --quiet
+  # `huggingface-cli` was removed in huggingface_hub 1.x; new entrypoint is `hf`.
+  # `--local-dir-use-symlinks False` was the old-CLI default behavior; the new
+  # CLI doesn't symlink at all, so the flag is gone.
+  hf download "${MODEL_ID}" --local-dir "${MODEL_DIR}"
 fi
 
 # 5. Sanity check ------------------------------------------------------------
