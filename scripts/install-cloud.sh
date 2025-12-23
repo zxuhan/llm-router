@@ -51,12 +51,21 @@ export PATH="/usr/local/go/bin:${PATH}"
 if ! python3 -c "import vllm" 2>/dev/null; then
   log "installing vLLM ${VLLM_VERSION}"
   pip install --upgrade pip --quiet
-  # huggingface_hub 1.x dropped the [hf_transfer] extra; install it as a
-  # separate package and rely on HF_HUB_ENABLE_HF_TRANSFER=1 below.
-  pip install --quiet "vllm==${VLLM_VERSION}" "huggingface_hub" "hf_transfer"
+  # vLLM 0.6.4 was tested against the late-2024 transformers/hub versions.
+  # Newer transformers (4.48+) removed `Tokenizer.all_special_tokens_extended`
+  # which vllm 0.6.4 still calls; newer huggingface_hub (1.x) renamed enough
+  # surface area to also break things. Pin both explicitly.
+  pip install --quiet \
+    "vllm==${VLLM_VERSION}" \
+    "transformers==4.46.3" \
+    "huggingface_hub==0.26.5" \
+    "hf_transfer"
 else
   installed=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo unknown)
   log "vLLM already installed: ${installed}"
+  # Even if vllm is already installed, repin transformers+hub in case the base
+  # image / a previous step pulled in newer versions that break vllm 0.6.4.
+  pip install --quiet "transformers==4.46.3" "huggingface_hub==0.26.5"
 fi
 # Make sure hf_transfer is present even if vllm install was skipped.
 python3 -c "import hf_transfer" 2>/dev/null || pip install --quiet hf_transfer
@@ -72,10 +81,11 @@ if [ -f "${MODEL_DIR}/config.json" ]; then
   log "model already present at ${MODEL_DIR}; skipping download"
 else
   log "downloading ${MODEL_ID} -> ${MODEL_DIR}"
-  # `huggingface-cli` was removed in huggingface_hub 1.x; new entrypoint is `hf`.
-  # `--local-dir-use-symlinks False` was the old-CLI default behavior; the new
-  # CLI doesn't symlink at all, so the flag is gone.
-  hf download "${MODEL_ID}" --local-dir "${MODEL_DIR}"
+  # We pinned huggingface_hub to 0.26.5 above (so vllm 0.6.4 works); that
+  # version still ships the `huggingface-cli` entrypoint, not `hf`.
+  huggingface-cli download "${MODEL_ID}" \
+    --local-dir "${MODEL_DIR}" \
+    --local-dir-use-symlinks False
 fi
 
 # 5. Sanity check ------------------------------------------------------------
