@@ -32,9 +32,9 @@ func TestSummarise_EmptyResults(t *testing.T) {
 func TestSummarise_CacheTokenRate(t *testing.T) {
 	now := time.Now()
 	results := []Result{
-		{BackendID: "a", StartedAt: now, CompletedAt: now.Add(time.Millisecond), TTFT: time.Millisecond, Total: time.Millisecond,
+		{StatusCode: 200, BackendID: "a", StartedAt: now, CompletedAt: now.Add(time.Millisecond), TTFT: time.Millisecond, Total: time.Millisecond,
 			PromptTokens: 100, CachedTokens: 80},
-		{BackendID: "a", StartedAt: now, CompletedAt: now.Add(time.Millisecond), TTFT: time.Millisecond, Total: time.Millisecond,
+		{StatusCode: 200, BackendID: "a", StartedAt: now, CompletedAt: now.Add(time.Millisecond), TTFT: time.Millisecond, Total: time.Millisecond,
 			PromptTokens: 200, CachedTokens: 100},
 	}
 	s := Summarise("any", results)
@@ -50,7 +50,7 @@ func TestWriteMarkdown_ShowsCacheRateWhenAvailable(t *testing.T) {
 	now := time.Now()
 	summaries := []Summary{
 		Summarise("real", []Result{
-			{BackendID: "a", Reason: "longest-prefix", StartedAt: now,
+			{StatusCode: 200, BackendID: "a", Reason: "longest-prefix", StartedAt: now,
 				CompletedAt: now.Add(time.Millisecond), TTFT: time.Millisecond, Total: time.Millisecond,
 				PromptTokens: 100, CachedTokens: 80},
 		}),
@@ -102,6 +102,31 @@ func TestSummarise_HitRateAndDistribution(t *testing.T) {
 	}
 }
 
+func TestSummarise_NonOK_StatusCounted_AsError(t *testing.T) {
+	// A 4xx or 5xx upstream response must NOT be folded into the success
+	// percentiles. Catches the cloud-bench regression where a misconfigured
+	// vLLM worker returned 405 to every request and the bench reported its
+	// ~1ms time-to-error as "TTFT p50 282µs".
+	now := time.Now()
+	results := []Result{
+		// healthy
+		{StatusCode: 200, BackendID: "w1", Reason: "longest-prefix", StartedAt: now,
+			CompletedAt: now.Add(50 * time.Millisecond), TTFT: 50 * time.Millisecond, Total: 50 * time.Millisecond},
+		// dead worker rejecting fast
+		{StatusCode: 405, BackendID: "w0", Reason: "longest-prefix", StartedAt: now,
+			CompletedAt: now.Add(time.Millisecond), TTFT: 200 * time.Microsecond, Total: 200 * time.Microsecond},
+		{StatusCode: 502, BackendID: "w0", Reason: "longest-prefix", StartedAt: now,
+			CompletedAt: now.Add(time.Millisecond), TTFT: 300 * time.Microsecond, Total: 300 * time.Microsecond},
+	}
+	s := Summarise("prefixaware", results)
+	if s.Errors != 2 || s.Successful != 1 {
+		t.Errorf("Errors=%d Successful=%d, want Errors=2 Successful=1", s.Errors, s.Successful)
+	}
+	if s.TTFT.P50 < 40*time.Millisecond {
+		t.Errorf("TTFT.P50 = %v; errors must not pull p50 below the one healthy 50ms request", s.TTFT.P50)
+	}
+}
+
 func TestSummarise_NeutralStrategies(t *testing.T) {
 	// A non-prefix router (round-robin) should produce 100% Neutral and 0
 	// PinnedRequests/SpilledRequests/FallbackRequests. The sum of decision
@@ -128,15 +153,15 @@ func TestSummarise_UpstreamHitRate(t *testing.T) {
 	now := time.Now()
 	results := []Result{
 		// Two upstream hits (cached_tokens > 0), one upstream miss.
-		{BackendID: "a", Reason: "longest-prefix",
+		{StatusCode: 200, BackendID: "a", Reason: "longest-prefix",
 			StartedAt: now, CompletedAt: now.Add(time.Millisecond),
 			TTFT: time.Millisecond, Total: time.Millisecond,
 			PromptTokens: 100, CachedTokens: 80},
-		{BackendID: "a", Reason: "longest-prefix",
+		{StatusCode: 200, BackendID: "a", Reason: "longest-prefix",
 			StartedAt: now, CompletedAt: now.Add(time.Millisecond),
 			TTFT: time.Millisecond, Total: time.Millisecond,
 			PromptTokens: 100, CachedTokens: 50},
-		{BackendID: "a", Reason: "fallback-least-loaded",
+		{StatusCode: 200, BackendID: "a", Reason: "fallback-least-loaded",
 			StartedAt: now, CompletedAt: now.Add(time.Millisecond),
 			TTFT: time.Millisecond, Total: time.Millisecond,
 			PromptTokens: 100, CachedTokens: 0},
@@ -153,7 +178,7 @@ func TestSummarise_UpstreamHitRate(t *testing.T) {
 func TestWriteMarkdown_DecisionBreakdownAppearsForPrefixStrategies(t *testing.T) {
 	now := time.Now()
 	mk := func(reason string) Result {
-		return Result{BackendID: "a", Reason: reason, StartedAt: now,
+		return Result{StatusCode: 200, BackendID: "a", Reason: reason, StartedAt: now,
 			CompletedAt: now.Add(time.Millisecond),
 			TTFT:        time.Millisecond, Total: time.Millisecond}
 	}

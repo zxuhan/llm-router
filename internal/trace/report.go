@@ -84,7 +84,14 @@ func Summarise(strategy string, results []Result) Summary {
 	totalSamples := make([]time.Duration, 0, len(results))
 	var firstStart, lastEnd time.Time
 	for _, r := range results {
-		if r.Err != "" {
+		// Treat both transport errors AND non-2xx upstream responses as failures.
+		// Folding e.g. a 405 into the percentile bucket would compute "TTFT" of
+		// the time-to-error (often <1ms) and call it a successful request, which
+		// silently inflates throughput and crushes the latency numbers - the
+		// exact thing that caused us to ship a bench run where one dead worker
+		// was reported as "PA p50 282µs" because every PA request hit it and
+		// was rejected at the FastAPI router level.
+		if r.Err != "" || r.StatusCode == 0 || r.StatusCode >= 400 {
 			s.Errors++
 			continue
 		}

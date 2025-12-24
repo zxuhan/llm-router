@@ -47,7 +47,11 @@ export PATH="/usr/local/go/bin:${PATH}"
 
 MODEL_DIR="${MODEL_DIR:-models/qwen2.5-7b}"
 N_WORKERS="${N_WORKERS:-$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')}"
-START_PORT="${START_PORT:-8001}"
+# Default to a high, unlikely-to-be-taken port range. RunPod's PyTorch image
+# has nginx running on :8001 by default; a vLLM bind there fails silently
+# and nginx happily 200s /health while 405-ing every POST /v1/chat/completions,
+# producing an entire bench report of garbage (we hit this once, hence 18001).
+START_PORT="${START_PORT:-18001}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 
@@ -74,6 +78,19 @@ python3 -c "import vllm" 2>/dev/null || fail "vllm not importable; rerun scripts
 [ -f "${MODEL_DIR}/config.json" ] || fail "model not found at ${MODEL_DIR}; rerun scripts/install-cloud.sh"
 [ -x bin/bench ] || fail "bin/bench not built; run: make build"
 [ "${N_WORKERS}" -ge 2 ] || fail "need >= 2 GPUs; nvidia-smi sees ${N_WORKERS}"
+
+# Verify none of the ports we're about to use are already taken by some other
+# process on the host (nginx on RunPod, leftover vLLM, etc.). A silent vLLM
+# bind failure produces invalid bench data, so this is a hard fail.
+for i in $(seq 0 $((N_WORKERS - 1))); do
+  port=$((START_PORT + i))
+  if ss -tln "( sport = :${port} )" 2>/dev/null | grep -q LISTEN; then
+    echo "ERROR: port ${port} is already in use; vLLM bind would fail silently." >&2
+    echo "       Holder: $(ss -tlnp "( sport = :${port} )" 2>/dev/null | tail -1)" >&2
+    echo "       Pick a different START_PORT, or stop the holder." >&2
+    exit 1
+  fi
+done
 
 mkdir -p "${OUT_DIR}/raw" /tmp/vllm-logs
 rm -rf "${OUT_DIR}"/raw* "${OUT_DIR}"/real-*.json "${OUT_DIR}"/real.md
@@ -140,17 +157,30 @@ wait_for_health() {
   done
 }
 
-# Pre-warm CUDA kernels on each worker with a UNIQUE prompt per worker, so
-# the cold-prefill measurements in the bench measure prefill, not JIT.
+# Pre-warm CUDA kernels on each worker with a UNIQUE prompt per worker, AND
+# verify each worker actually answers POST /v1/chat/completions with 200.
+# /health returning OK is not enough: a misconfigured vLLM (wrong
+# --served-model-name, missing model file, FastAPI route shadowing) can
+# pass /health while rejecting every chat request with 405. We hit that bug
+# in production and produced an entire benchmark report where one dead
+# worker masqueraded as "PA p50 282µs". Hard-fail here instead.
 warmup_workers() {
   local i=0
-  local seed_phrase
+  local seed_phrase status
   for port in "${ports[@]}"; do
     seed_phrase="warmup-w${i}-$(date +%s%N)"
-    curl -fs -X POST "http://127.0.0.1:${port}/v1/chat/completions" \
+    status=$(curl -s -o /dev/null -w '%{http_code}' \
+      -X POST "http://127.0.0.1:${port}/v1/chat/completions" \
       -H 'Content-Type: application/json' \
       -d "{\"model\":\"${SERVED_MODEL_NAME}\",\"messages\":[{\"role\":\"user\",\"content\":\"${seed_phrase}\"}],\"max_tokens\":1}" \
-      >/dev/null 2>&1 || true
+      || echo "000")
+    if [ "${status}" != "200" ]; then
+      echo "ERROR: worker w${i} on :${port} returned HTTP ${status} to warmup POST." >&2
+      echo "       Last 30 log lines:" >&2
+      tail -30 "/tmp/vllm-logs/w${i}.log" >&2 || true
+      echo "       Hint: check --served-model-name matches the trace generator's 'fake-model'." >&2
+      exit 1
+    fi
     i=$((i + 1))
   done
 }
