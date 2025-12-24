@@ -2,11 +2,17 @@ package router
 
 import (
 	"context"
+	"math/rand"
 	"strings"
 	"testing"
 
 	"github.com/zxuhan/llm-router/internal/backend"
 )
+
+// fixedRng returns a deterministically-seeded RNG for tests that depend on
+// PrefixAware's tie-break ordering being reproducible. Production code uses a
+// time-seeded RNG; tests pin a known seed.
+func fixedRng() *rand.Rand { return rand.New(rand.NewSource(42)) }
 
 func TestPrefixAware_PinsToWorkerWithLongestMatch(t *testing.T) {
 	backends := makeStubs("a", "b", "c")
@@ -73,16 +79,47 @@ func TestPrefixAware_NoBackends(t *testing.T) {
 
 func TestPrefixAware_DefaultsAreUsable(t *testing.T) {
 	backends := makeStubs("a", "b")
-	// All-default options.
+	// All-default options. With tie-break randomization, no-insert state means
+	// either backend may win on any single call; verify that whichever is
+	// returned is one of the configured pool and the call succeeds.
 	r := NewPrefixAware(backends, PrefixAwareOptions{})
 	d, err := r.Choose(context.Background(), "anything")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// With no inserts, no worker matches; threshold 0 means the longest-match
-	// branch wins anyway and pins to backends[0] deterministically.
-	if d.Backend.ID() != "a" {
-		t.Errorf("got %q, want a", d.Backend.ID())
+	if d.Backend.ID() != "a" && d.Backend.ID() != "b" {
+		t.Errorf("got %q, want one of {a,b}", d.Backend.ID())
+	}
+}
+
+// With four backends sharing identical (zero-length) prefix match and zero
+// inflight, the tie-break shuffle should distribute calls roughly uniformly
+// rather than always pinning to backends[0]. The check is loose -- we only
+// assert that more than ONE backend was hit across 200 calls -- because the
+// RNG is seeded; a tighter chi-square test would be brittle without
+// statistical context.
+func TestPrefixAware_TieBreakDistributesAcrossWorkers(t *testing.T) {
+	backends := makeStubs("a", "b", "c", "d")
+	r := NewPrefixAware(backends, PrefixAwareOptions{Rng: fixedRng()})
+
+	picked := map[string]int{}
+	for i := 0; i < 200; i++ {
+		d, err := r.Choose(context.Background(), "shared-prefix-but-no-inserts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		picked[d.Backend.ID()]++
+	}
+	if len(picked) < 3 {
+		t.Errorf("expected ties to spread across >= 3 of 4 workers, only saw %v",
+			picked)
+	}
+	// Each backend should land in roughly 50/200 (25%); accept >=15 hits per
+	// hit-backend as a generous lower bound.
+	for id, n := range picked {
+		if n < 15 {
+			t.Errorf("backend %q only picked %d/200 times -- shuffle is too weak", id, n)
+		}
 	}
 }
 

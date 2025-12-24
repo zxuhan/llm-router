@@ -2,7 +2,10 @@ package router
 
 import (
 	"context"
+	"math/rand"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/zxuhan/llm-router/internal/backend"
 	"github.com/zxuhan/llm-router/internal/prefixtree"
@@ -26,6 +29,10 @@ type PrefixAware struct {
 	saturationInflight int
 	fallback           Router
 	trees              map[string]*prefixtree.Tree
+
+	// rngMu guards rng. math/rand.Rand is not safe for concurrent use.
+	rngMu sync.Mutex
+	rng   *rand.Rand
 }
 
 // PrefixAwareOptions configures a PrefixAware router.
@@ -44,6 +51,16 @@ type PrefixAwareOptions struct {
 	// threshold or all best-prefix workers are saturated. Defaults to
 	// NewLeastLoaded(backends).
 	Fallback Router
+	// Rng is the source of randomness for tie-breaking among workers with
+	// equal prefix-match length and equal in-flight count. nil seeds from
+	// the wall clock; tests should pass a deterministically-seeded *rand.Rand.
+	//
+	// Without tie-break randomization, every worker that shares a common
+	// system prompt has the same match length on the first turn of a session;
+	// the deterministic (idx asc) tie-break sends every session to the
+	// lowest-index worker, causing single-worker queuing and crushing PA's
+	// performance under load. See docs/decisions/0009-tie-break-randomization.md.
+	Rng *rand.Rand
 }
 
 // NewPrefixAware constructs a PrefixAware router. Each backend gets a tree
@@ -62,6 +79,11 @@ func NewPrefixAware(backends []backend.Backend, opts PrefixAwareOptions) *Prefix
 	for _, b := range backends {
 		trees[b.ID()] = prefixtree.NewTree(b.KVBudget())
 	}
+	rng := opts.Rng
+	if rng == nil {
+		// #nosec G404 -- non-cryptographic tie-break.
+		rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
 	return &PrefixAware{
 		base:               newBase(backends),
 		chunker:            chunker,
@@ -69,6 +91,7 @@ func NewPrefixAware(backends []backend.Backend, opts PrefixAwareOptions) *Prefix
 		saturationInflight: opts.SaturationInflight,
 		fallback:           fb,
 		trees:              trees,
+		rng:                rng,
 	}
 }
 
@@ -100,15 +123,18 @@ func (p *PrefixAware) Choose(ctx context.Context, prompt string) (Decision, erro
 			inflight: b.Inflight(),
 		}
 	}
-	// Sort by (match desc, inflight asc, idx asc) so the result is stable.
+	// Pre-shuffle so that workers with equal (match, inflight) get a randomized
+	// final order. The stable sort below preserves this for ties; non-ties
+	// still respect the (match desc, inflight asc) ordering.
+	p.rngMu.Lock()
+	p.rng.Shuffle(len(cands), func(i, j int) { cands[i], cands[j] = cands[j], cands[i] })
+	p.rngMu.Unlock()
+	// Sort by (match desc, inflight asc); ties preserve the random pre-shuffle.
 	sort.SliceStable(cands, func(i, j int) bool {
 		if cands[i].match != cands[j].match {
 			return cands[i].match > cands[j].match
 		}
-		if cands[i].inflight != cands[j].inflight {
-			return cands[i].inflight < cands[j].inflight
-		}
-		return cands[i].idx < cands[j].idx
+		return cands[i].inflight < cands[j].inflight
 	})
 
 	best := cands[0]

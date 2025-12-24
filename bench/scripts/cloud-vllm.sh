@@ -56,11 +56,23 @@ GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
 
 RUNS="${RUNS:-3}"
+# Production-shape trace defaults (Cursor / Claude Code-ish). The earlier
+# small-prompt config (sys=2048, turns=4, max_tokens=16) made cache benefit
+# small relative to decode and let single-worker queuing dominate PA's
+# advantage. Bigger prefill, more turns, more generated tokens = the
+# regime where prefix caching actually matters in production.
 SESSIONS="${SESSIONS:-12}"
-TURNS="${TURNS:-4}"
-SYS_LEN="${SYS_LEN:-2048}"
-MAX_TOKENS="${MAX_TOKENS:-16}"
+TURNS="${TURNS:-8}"
+SYS_LEN="${SYS_LEN:-6144}"
+MAX_TOKENS="${MAX_TOKENS:-64}"
 SEED="${SEED:-17}"
+# Lower default than the package default of 8. With 12 sessions on 4 workers
+# all sharing a system prompt, threshold=8 lets a single worker queue 8
+# requests before spilling -- queuing penalty crushes cache benefit. Lower
+# threshold spreads the load while still preserving intra-session locality
+# (subsequent turns of a session still pin to the worker that handled turn 1
+# because that worker has the longest match). Override with SATURATION_INFLIGHT.
+SATURATION_INFLIGHT="${SATURATION_INFLIGHT:-4}"
 OUT_DIR="${OUT_DIR:-bench/results}"
 
 # vLLM has to advertise the same model name the trace generator uses,
@@ -92,8 +104,12 @@ for i in $(seq 0 $((N_WORKERS - 1))); do
   fi
 done
 
+# Wipe the WHOLE OUT_DIR (not just specific files) so an scp -r afterwards
+# never produces a nested 'results/' directory inside an existing one. If a
+# wrapper (e.g. concurrency-sweep.sh) wants to keep prior data, it should
+# point OUT_DIR at a fresh subdir per call.
+rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}/raw" /tmp/vllm-logs
-rm -rf "${OUT_DIR}"/raw* "${OUT_DIR}"/real-*.json "${OUT_DIR}"/real.md
 
 ports=()
 for i in $(seq 0 $((N_WORKERS - 1))); do
@@ -111,6 +127,7 @@ boot_vllm_workers() {
         --served-model-name "${SERVED_MODEL_NAME}" \
         --port "${port}" \
         --enable-prefix-caching \
+        --enable-prompt-tokens-details \
         --gpu-memory-utilization "${GPU_MEM_UTIL}" \
         --max-model-len "${MAX_MODEL_LEN}" \
         --disable-log-requests \
@@ -213,6 +230,7 @@ for strat in roundrobin random leastloaded prefixaware; do
       --turns "${TURNS}" \
       --system-len "${SYS_LEN}" \
       --max-tokens "${MAX_TOKENS}" \
+      --saturation-inflight "${SATURATION_INFLIGHT}" \
       --json "${OUT_DIR}/real-${strat}${suffix}.json" \
       --raw-results "${rawdir}"
   done
@@ -254,11 +272,15 @@ PRE-FLIGHT CHECKS (do all THREE before terminating):
    2. ls ${OUT_DIR}/raw-run*/prefixaware.jsonl
       -> 3 files (one per seed), each with 18+ JSONL lines.
 
-   3. SCP the directory to your laptop and verify it arrived:
+   3. SCP the directory to your laptop and verify it arrived. ALWAYS rm -rf
+      the local destination FIRST, otherwise scp -r nests results inside an
+      existing dir and you end up debugging stale data later.
       RUN ON YOUR LAPTOP (not the pod):
 
+         rm -rf ./bench-results-cloud
          scp -P <pod-ssh-port> -r root@${PUBLIC_IP}:${ABS_OUT} ./bench-results-cloud
          ls bench-results-cloud/real.md   # must exist locally
+         head -20 bench-results-cloud/real.md   # verify no microsecond TTFTs
 
 ON YOUR LAPTOP, AFTER SCP:
 
