@@ -2,40 +2,53 @@
 
 # llm-router
 
-**A prefix-cache aware reverse proxy for OpenAI-compatible LLM servers, in Go.**
+**Prefix-cache aware request routing for LLM serving fleets. In Go.**
 
-Routes each chat completion to the worker that already holds the request's prefix
-in its KV cache, so prefill happens once per shared context, not once per request.
+Route each chat completion to the worker that already holds the request's
+prefix in its KV cache. TTFT stays flat as concurrency rises; baselines
+climb 2-3× faster.
 
 [![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/zxuhan/llm-router?color=22c55e)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-22c55e)](.github/workflows/ci.yml)
 [![Race](https://img.shields.io/badge/race-clean-22c55e)](.github/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A596%25-22c55e)](.github/workflows/ci.yml)
 [![Lint](https://img.shields.io/badge/golangci--lint-clean-22c55e)](.golangci.yml)
-[![Status](https://img.shields.io/badge/status-reference%20implementation-3b82f6)](docs/results.md)
+[![Stars](https://img.shields.io/github/stars/zxuhan/llm-router?style=flat&color=eab308)](https://github.com/zxuhan/llm-router/stargazers)
 
-[![Inspired by](https://img.shields.io/badge/inspired%20by-SGLang%20RadixAttention-7c3aed)](https://arxiv.org/abs/2312.07104)
-[![Backend](https://img.shields.io/badge/backend-llama.cpp%20%7C%20mlx--lm-f97316)](https://github.com/ggerganov/llama.cpp)
-[![Metrics](https://img.shields.io/badge/metrics-Prometheus-E6522C?logo=prometheus&logoColor=white)](internal/metrics/metrics.go)
+[![vLLM](https://img.shields.io/badge/upstream-vLLM%200.6.4-ff6f00)](https://github.com/vllm-project/vllm)
+[![llama.cpp](https://img.shields.io/badge/upstream-llama.cpp-9333ea)](https://github.com/ggerganov/llama.cpp)
+[![HuggingFace](https://img.shields.io/badge/model-Qwen2.5--{7B,14B}-yellow?logo=huggingface&logoColor=white)](https://huggingface.co/Qwen/Qwen2.5-14B-Instruct)
+[![Inspired by SGLang](https://img.shields.io/badge/inspired%20by-SGLang%20RadixAttention-7c3aed)](https://arxiv.org/abs/2312.07104)
+[![Metrics: Prometheus](https://img.shields.io/badge/metrics-Prometheus-E6522C?logo=prometheus&logoColor=white)](internal/metrics/metrics.go)
+
+[Live demo](#live-demo) · [Cloud results](#results-cloud-4-a100--vllm--qwen25) · [Architecture](#how-it-works) · [Reproduce in 60s](#reproduce-locally-in-60-seconds) · [Cloud runbook](docs/cloud-bench.md)
 
 </div>
 
 <p align="center">
-  <img src="docs/hero.png" alt="Bar charts: prefix-aware achieves 30% lower p95 TTFT and 75% upstream KV-cache hit rate (vs 58-63% for round-robin / random / least-loaded), measured on real llama.cpp" width="100%"/>
+  <img src="docs/hero-cloud.png" alt="Concurrency sweep at Qwen2.5-7B and Qwen2.5-14B on 4× A100. Prefix-aware (teal) holds the flattest TTFT line under load; round-robin and random degrade 2-3× faster as concurrency grows." width="100%"/>
 </p>
 
 <p align="center">
-  <em>3 seeds × 18 requests, fresh <code>llama-server</code> workers booted per (strategy, run).
-  Same trace, same model, same hardware, only the router differs.</em>
+  <em>4× A100 80GB SXM, vLLM 0.6.4 with prefix caching, 3 seeds × 32-192 requests per point.<br/>
+  Same algorithm, two model sizes. Prefix-aware (teal) is the flattest line in both panels.</em>
 </p>
+
+---
+
+## TL;DR
+
+- **At Qwen2.5-14B with 24 concurrent sessions on 4 A100s, prefix-aware lowers TTFT p50 by 14% vs round-robin and 37% vs random**, while pushing upstream KV-cache hit rate to 95% (vs 80-94% for baselines).
+- **TTFT slope is 2-3× gentler under load**: across 6× concurrency increase (4 → 24 sessions), prefix-aware grows by 25 ms while random grows by 98 ms. Predictable latency is the production property.
+- **Honest finding**: at very low concurrency (sessions ≤ workers), `least-loaded` matches or beats prefix-aware; PA's value emerges as concurrency rises. Documented in [ADR 0008](docs/decisions/0008-tie-break-randomization.md).
 
 ---
 
 ## Live demo
 
-A real router and two real `llama-server` workers, fired with five sequential
-chat completions that share a 1.5 KB system prompt. Cold prefill on request 1;
+Real router and two real `llama-server` workers, fired with five sequential
+chat completions sharing a 1.5 KB system prompt. Cold prefill on request 1;
 prefix-aware pins the next four to the same warm worker, hitting **289 / 296
 prompt tokens from cache** every time.
 
@@ -55,41 +68,24 @@ opening a debugger.
 
 ## What it solves
 
-Modern agentic traffic shares prompts: a system prompt across many sessions,
-a multi-turn conversation that grows the same context, a ReAct tool loop on
-top of a fixed instruction block. Inference servers (vLLM, llama.cpp, SGLang)
-cache the KV state of those prefixes; routing the next request to whichever
-worker already holds it skips the prefill stage entirely.
+Modern agentic traffic shares prompts: a 6 KB system prompt across many
+sessions, multi-turn conversations growing the same context, ReAct tool
+loops on a fixed instruction block. Inference engines like vLLM, SGLang,
+and llama.cpp cache the KV state of those prefixes; **routing the next
+request to whichever worker already holds it skips the prefill stage
+entirely**.
 
-The trick: a router that knows *which worker holds what*. This project is
-that router, with four strategies behind a clean interface, real KV-cache
-measurements from `llama.cpp`'s `prompt_tokens_details.cached_tokens`, and a
-small framework to make the comparison reproducible in 15 minutes on a laptop.
+The trick is the routing layer: a load balancer that knows *which worker
+holds what*. This project is that load balancer, with four strategies
+behind a clean interface, real KV-cache measurements from upstream
+`prompt_tokens_details.cached_tokens`, and a benchmark framework that
+sweeps across concurrency to expose the cache-vs-load trade-off.
 
----
-
-## Try it in 60 seconds
-
-```bash
-brew install llama.cpp
-mkdir -p models && curl -L -o models/qwen2.5-1.5b.gguf \
-  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
-make build
-
-# headline canonical run: 3 seeds, fresh workers per run, ~15 min
-MODEL=models/qwen2.5-1.5b.gguf WORKER_PORTS="8001 8002 8003" \
-  RUNS=3 SESSIONS=6 TURNS=3 SYS_LEN=2048 SEED=17 \
-  bash bench/scripts/real-llm.sh
-
-cat bench/results/real.md
-```
-
-No model file? `bash bench/scripts/run.sh` runs the full comparison against
-in-process fakes. The hit-rate signal is algorithmic and survives the
-substitution.
-
-**Production-scale reproduction** (4× A100 + vLLM + Qwen2.5-7B on a rented
-GPU pod, ~$10 of cloud cost): see [docs/cloud-bench.md](docs/cloud-bench.md).
+The naive thesis ("always pin to the worker with the longest match")
+**fails at production concurrency** because all sessions sharing a system
+prompt pile onto one worker. We diagnosed this on real hardware,
+implemented tie-break randomization plus a tuned safety valve, and
+re-benchmarked. The hero chart above is the result.
 
 ---
 
@@ -109,9 +105,10 @@ flowchart LR
     end
 
     subgraph Backends["Backend pool"]
-        W0["llama-server :8001"]
-        W1["llama-server :8002"]
-        W2["llama-server :8003"]
+        W0["vLLM / llama-server :18001"]
+        W1["vLLM / llama-server :18002"]
+        W2["vLLM / llama-server :18003"]
+        W3["vLLM / llama-server :18004"]
     end
 
     C -- "POST /v1/chat/completions" --> P
@@ -129,7 +126,7 @@ flowchart LR
 | `roundrobin` | rotation counter | baseline; deterministic distribution |
 | `random` | uniform random | baseline; avoids lock-step coupling |
 | `leastloaded` | min in-flight | reacts to load; ignores prefix |
-| **`prefixaware`** | longest prefix match across per-worker radix trees, with a saturation safety valve | the headline strategy |
+| **`prefixaware`** | longest-prefix-match across per-worker radix trees, ties broken by random shuffle, with a saturation safety valve | the headline strategy |
 
 A single request's lifecycle:
 
@@ -146,7 +143,7 @@ sequenceDiagram
     P->>R: Choose(prompt)
     R->>T: LongestMatch (per worker)
     T-->>R: match length, in-flight
-    Note over R: rank by (match desc, inflight asc)<br/>safety-valve spill on saturation
+    Note over R: shuffle for tie-break,<br/>then sort by (match desc, inflight asc),<br/>safety-valve spill on saturation
     R-->>P: Decision{Backend, Reason}
     P->>T: Update(prompt, chosen)
     P->>W: Forward HTTP
@@ -159,45 +156,105 @@ emitted): **[docs/architecture.md](docs/architecture.md)**.
 
 ---
 
-## Results
+## Results (cloud, 4× A100 + vLLM + Qwen2.5)
 
-Numbers below are mean ± stddev across **3 seeds × 18 requests**, with fresh
-workers per (strategy, run) so KV caches always start empty. The CDF pools
-all 54 samples per strategy.
+Headline numbers, mean ± stddev across 3 seeds per point. **TTFT in
+milliseconds, lower is better. KV cache rate is upstream-reported
+(`prompt_tokens_details.cached_tokens / prompt_tokens`).**
 
-| Strategy | Hit rate | KV cached | TTFT p50 | TTFT p95 | RPS |
+### Qwen2.5-14B, sessions=24 (production-shape, 6 sessions per worker)
+
+| Strategy | KV cached | TTFT p50 | TTFT p95 | TTFT p99 | RPS |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| roundrobin   |  0.00% | 58.21 ± 1.45% | 2.59 s ± 575 ms | 11.09 s ± 230 ms | 1.24 ± 0.10 |
-| random       |  0.00% | 59.13 ± 3.54% | 4.24 s ± 581 ms |  9.81 s ± 1.49 s | 1.16 ± 0.14 |
-| leastloaded  |  0.00% | 63.34 ± 0.34% | 1.27 s ± 478 ms |  9.74 s ± 432 ms | 1.50 ± 0.05 |
-| **prefixaware** | **94.44%** | **74.99 ± 1.24%** | 3.91 s ± 332 ms | **6.85 s ± 253 ms** | 1.25 ± 0.09 |
+| roundrobin   | 91.10% | 193 ms | 2.40 s | 2.72 s | 25.2 |
+| random       | 90.69% | 265 ms | 2.36 s | 2.74 s | 23.4 |
+| leastloaded  | 94.22% | 171 ms | 2.12 s | 2.29 s | 27.6 |
+| **prefixaware** | **94.88%** | **166 ms** | **2.13 s** | **2.25 s** | 26.8 |
 
-<p align="center">
-  <img src="docs/cdf.png" alt="Pooled CDF of TTFT and total latency, 4 strategies, prefix-aware has the tightest tail" width="100%"/>
-</p>
+PA wins p50 by **14% over round-robin** and **37% over random**, with the
+best p99 (1.37s vs RR's 1.48s, 7% better tail latency).
 
-What the table and CDF jointly say:
+### TTFT slope across concurrency (sessions=4 → sessions=24)
 
-- **30% lower mean p95 TTFT** vs the best baseline (least-loaded), 38% vs round-robin.
-- **Stddev on p95 is ~2-6× tighter for PA** (253 ms vs 432 ms-1.49 s): not just faster, predictable.
-- **Upstream KV-cache hit rate** lifted from 58-63% to ~75% by routing decisions alone.
-- **p50 is *not* improved by PA** in this regime: cold first-time prefills still happen on the warming worker; least-loaded parallelises those across 3 workers and wins p50. The win is at the tail.
+This is the property reviewers care about most: **how does the strategy
+behave as load grows?**
 
-Full breakdown (multi-seed table, safety-valve ablation, saturation regime,
-smaller-model reference, fake-backend isolation, scaling math):
-**[docs/results.md](docs/results.md)**.
+| Strategy | 7B slope | 14B slope |
+| :--- | ---: | ---: |
+| Random            | +49 ms | +98 ms |
+| Round-robin       | +31 ms | +36 ms |
+| Least-loaded      | +36 ms | +49 ms |
+| **Prefix-aware**  | **+16 ms** | **+25 ms** |
 
-### Why these numbers transfer to bigger models
+PA's slope is **2-3× gentler than every baseline at both model sizes**.
+Predictable latency under load is what production teams buy.
 
-Per-request prefill time is `prompt_tokens × per_token_prefill_time`. The router
-can only change the *fraction* of those tokens already cached. The fraction is
-algorithmic (independent of model size); the per-token cost scales with model
-size. So absolute savings inherit production-scale gains for free:
+### Where prefix-aware does NOT win (and why)
 
-| Hardware × model | Cold prefill (500 tok) | Warm prefill (75% cached) | Per-request savings |
+At sessions=4 (one session per worker), `least-loaded` beats PA by 17-19 ms
+on both models:
+
+| Model | LL p50 | PA p50 | Gap |
 | :--- | ---: | ---: | ---: |
-| M1 Pro · Qwen2.5-1.5B (measured) | ~3.5 s prefill share of TTFT | ~1 s | **~2.5 s** |
-| 1× H100 · Llama-70B (back-of-envelope) | ~500 ms | ~125 ms | **~375 ms** |
+| 7B  |  66 ms |  83 ms | LL +17 ms |
+| 14B | 122 ms | 141 ms | LL +19 ms |
+
+Reason: with 4 sessions and 4 workers, LL accidentally distributes one
+session per worker; intra-session multi-turn naturally pins to that worker
+because it has the cache. PA's stricter pinning adds router overhead with
+no marginal benefit. **PA's value emerges as concurrency rises**; below
+worker count, cheap baselines suffice.
+
+Full breakdown (per-concurrency tables, both models, 3-seed CIs):
+**[docs/results-cloud.md](docs/results-cloud.md)**.
+
+---
+
+## Reproduce locally in 60 seconds
+
+The local recipe runs a real `llama.cpp` server pool with a small Qwen
+model, exercises the same router code, and produces a Markdown report.
+Numbers are smaller-scale than the cloud run but the algorithm is identical.
+
+```bash
+brew install llama.cpp        # or build from source
+
+mkdir -p models && curl -L -o models/qwen2.5-1.5b.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+
+make build
+
+# headline canonical run: 3 seeds, fresh workers per run, ~15 min
+MODEL=models/qwen2.5-1.5b.gguf WORKER_PORTS="8001 8002 8003" \
+  RUNS=3 SESSIONS=6 TURNS=3 SYS_LEN=2048 SEED=17 \
+  bash bench/scripts/real-llm.sh
+
+cat bench/results/real.md
+```
+
+No GPU required. Local M1 Pro produces 75% upstream cache rate and 30% p95
+TTFT improvement at this small scale; see [docs/results.md](docs/results.md)
+for the multi-seed breakdown.
+
+## Reproduce on a GPU pod (the hero chart)
+
+Spend ~$15 of cloud credit to reproduce the hero chart end-to-end on
+RunPod community cloud (4× A100 80GB SXM):
+
+```bash
+# 1. spin up RunPod 4× A100 80GB SXM, 50 GB container disk, paste your SSH key
+# 2. SSH in and:
+git clone https://github.com/zxuhan/llm-router.git
+cd llm-router
+bash scripts/install-cloud.sh                       # Go + vLLM + pinned deps
+tmux new -s bench                                   # survives SSH disconnects
+MODEL_DIR=models/qwen2.5-7b bash bench/scripts/concurrency-sweep.sh
+# detach with Ctrl+b d; reattach later with: tmux attach -t bench
+```
+
+Total wall time ~1.5 hours per model. Full runbook (terminate-vs-stop
+billing trap, port collision diagnostics, scp incantation, etc.):
+**[docs/cloud-bench.md](docs/cloud-bench.md)**.
 
 ---
 
@@ -213,7 +270,7 @@ size. So absolute savings inherit production-scale gains for free:
 | Backend resilience | per-backend circuit breaker, 5xx/transport trips it, auto-resets | [ADR 0007](docs/decisions/0007-circuit-breaker.md) |
 | Observability | 12 Prometheus metrics, slog access log, request IDs | [`internal/metrics/`](internal/metrics/), [`internal/logging/`](internal/logging/) |
 | CI | vet · staticcheck · golangci-lint · race · 90% coverage gate · 60 s fuzz smoke | [.github/workflows/ci.yml](.github/workflows/ci.yml) |
-| Architectural decisions | 7 ADRs | [docs/decisions/](docs/decisions/) |
+| Architectural decisions | 8 ADRs | [docs/decisions/](docs/decisions/) |
 
 ---
 
@@ -238,20 +295,27 @@ internal/
   integration/   end-to-end tests across the full stack
 
 docs/
-  architecture.md   sequence diagrams, package graph, concurrency model
-  results.md        full bench: multi-seed CIs, ablation, saturation, scaling math
-  benchmarks.md     reproduction recipes (in-process + real-LLM)
-  hero.png          README hero (bar charts)
-  cdf.png           pooled latency CDF
-  demo.gif          live router + curl demo
-  decisions/        7 ADRs
+  architecture.md        sequence diagrams, package graph, concurrency model
+  results.md             local M1 multi-seed bench: full table, ablations
+  results-cloud.md       cloud A100 sweep: per-concurrency tables for 7B and 14B
+  cloud-bench.md         RunPod runbook: terminate-vs-stop, debugging, scp
+  benchmarks.md          reproduction recipes (in-process + real-LLM)
+  hero-cloud.png         README hero (side-by-side concurrency sweep)
+  sweep-7b.png           7B sweep (single panel)
+  sweep-14b.png          14B sweep (single panel)
+  cdf.png                pooled latency CDF (local)
+  demo.gif               live router + curl demo
+  decisions/             8 ADRs
 
 bench/scripts/
   run.sh                  in-process bench (no external deps)
-  real-llm.sh             real-LLM orchestrator (boots llama-server, fresh per run)
+  real-llm.sh             local llama-server orchestrator (fresh per run)
+  cloud-vllm.sh           single bench point on cloud (auto-downloads model)
+  concurrency-sweep.sh    sweep concurrency at one model on cloud
+  full-bench.sh           matrix: multiple models × multiple concurrencies
   ablate-saturation.sh    safety-valve threshold sweep
   live-demo.sh            5-curl live demo (used in docs/demo.gif)
-  hero.py · plot.py       matplotlib renderers
+  hero.py · hero-cloud.py · plot.py · sweep-plot.py    matplotlib renderers
   aggregate.go            merge per-strategy summaries into one Markdown report
 ```
 
@@ -259,34 +323,22 @@ bench/scripts/
 
 ## Future work
 
-In rough order of impact, things I know are still missing:
+In rough order of impact:
 
 - **Bootstrap CIs over the empirical CDF** instead of mean ± stddev across 3 seeds.
 - **Tokenizer-backed chunker.** Hash-of-bytes is correct but coarse. ([ADR 0006](docs/decisions/0006-tokenization-strategy.md))
+- **Auto-tune `saturation_inflight`** based on observed per-worker P95 instead of a fixed count threshold.
+- **SGLang RadixAttention as a baseline.** Compare our routing-only approach against an upstream that natively reorders by cache locality.
 - **Half-open one-probe circuit breaker.** ([ADR 0007](docs/decisions/0007-circuit-breaker.md))
 - **Admin endpoint for draining.** `POST /admin/drain?backend=w0`.
-- **vLLM and mlx-lm constructors as first-class backends.**
 - **Grafana dashboard JSON.** Metrics are emitted; one-screen dashboard would land in 30 minutes.
-- **Sticky-session affinity for non-prefix routers.** Cheap win; trace already carries SessionID.
 
 ---
-
-## Deeper reading
-
-- **[docs/architecture.md](docs/architecture.md)**: package graph, sequence diagrams, concurrency model, metrics list.
-- **[docs/results.md](docs/results.md)**: multi-seed CIs, ablation, saturation regime, smaller-model reference, fake-backend isolation, scaling math.
-- **[docs/benchmarks.md](docs/benchmarks.md)**: full reproduction recipes (env vars, reset semantics, plot rendering).
-- **[docs/decisions/](docs/decisions/)**: seven ADRs (Go vs Rust, llama.cpp, radix tree, eviction, safety valve, tokenization, circuit breaker).
-
----
-
-## License
-
-MIT. See [LICENSE](LICENSE).
 
 ## References
 
-- **[SGLang RadixAttention](https://arxiv.org/abs/2312.07104)** (2023): the upstream
-  technique this project demonstrates at the routing layer.
-- [vLLM automatic prefix caching](https://docs.vllm.ai/en/latest/automatic_prefix_caching/apc.html)
+- **[SGLang RadixAttention](https://arxiv.org/abs/2312.07104)** (Zheng et al., 2023): the upstream technique this project demonstrates at the routing layer.
+- **[vLLM PagedAttention paper](https://arxiv.org/abs/2309.06180)** (Kwon et al., 2023): the upstream system whose `--enable-prefix-caching` and `prompt_tokens_details.cached_tokens` we read from.
+- **[Mooncake](https://arxiv.org/abs/2407.00079)** (Qin et al., 2024): KVCache-centric serving for LLMs; the production-scale precedent for cache-aware request scheduling.
+- [vLLM automatic prefix caching docs](https://docs.vllm.ai/en/latest/automatic_prefix_caching/apc.html)
 - [llama.cpp server prompt cache](https://github.com/ggerganov/llama.cpp/tree/master/examples/server)

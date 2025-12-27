@@ -13,3 +13,4 @@ add a new ADR that supersedes the old one rather than editing in place.
 | 0005 | [Safety valve for saturated workers](0005-safety-valve.md) | accepted |
 | 0006 | [Hash fixed-size byte chunks instead of running a real tokenizer](0006-tokenization-strategy.md) | accepted |
 | 0007 | [Two-state circuit breaker per backend](0007-circuit-breaker.md) | accepted |
+| 0008 | [Random tie-breaking among equal-prefix workers](0008-tie-break-randomization.md) | accepted (supersedes 0005's alternative section) |
