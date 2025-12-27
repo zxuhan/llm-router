@@ -79,6 +79,23 @@ OUT_DIR="${OUT_DIR:-bench/results}"
 # otherwise it 404s every request.
 SERVED_MODEL_NAME="fake-model"
 
+# Map MODEL_DIR basename -> HuggingFace repo for the auto-download path. If
+# a directory the script is asked to use isn't on disk, we fetch it ourselves
+# instead of failing the preflight. Override MODEL_ID explicitly to use a
+# different repo than the table here.
+derive_model_id() {
+  case "$(basename "$1")" in
+    qwen2.5-7b)    echo "Qwen/Qwen2.5-7B-Instruct"   ;;
+    qwen2.5-14b)   echo "Qwen/Qwen2.5-14B-Instruct"  ;;
+    qwen2.5-32b)   echo "Qwen/Qwen2.5-32B-Instruct"  ;;
+    qwen2.5-72b)   echo "Qwen/Qwen2.5-72B-Instruct"  ;;
+    llama-3.1-8b)  echo "meta-llama/Llama-3.1-8B-Instruct" ;;
+    llama-3.1-70b) echo "meta-llama/Llama-3.1-70B-Instruct" ;;
+    *) echo "" ;;
+  esac
+}
+MODEL_ID="${MODEL_ID:-$(derive_model_id "${MODEL_DIR}")}"
+
 log() { printf "\n[cloud-bench] %s\n" "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -87,9 +104,34 @@ log "preflight"
 command -v nvidia-smi >/dev/null || fail "nvidia-smi not found; is this a GPU pod?"
 command -v go >/dev/null || fail "go not found on PATH; rerun scripts/install-cloud.sh"
 python3 -c "import vllm" 2>/dev/null || fail "vllm not importable; rerun scripts/install-cloud.sh"
-[ -f "${MODEL_DIR}/config.json" ] || fail "model not found at ${MODEL_DIR}; rerun scripts/install-cloud.sh"
 [ -x bin/bench ] || fail "bin/bench not built; run: make build"
 [ "${N_WORKERS}" -ge 2 ] || fail "need >= 2 GPUs; nvidia-smi sees ${N_WORKERS}"
+
+# ---- ensure model is on disk ----------------------------------------------
+# Auto-download if missing instead of failing. This is the difference between
+# "I have to remember to pre-download every model the sweep wants" and
+# "I just say MODEL_DIR=models/qwen2.5-32b and the script handles it."
+if [ -f "${MODEL_DIR}/config.json" ]; then
+  log "model already present at ${MODEL_DIR}; skipping download"
+else
+  if [ -z "${MODEL_ID}" ]; then
+    fail "MODEL_DIR=${MODEL_DIR} not on disk and MODEL_ID is unset; cannot auto-download.
+       Either pre-download with 'huggingface-cli download <repo> --local-dir ${MODEL_DIR}'
+       or pass MODEL_ID=<hf-repo-id> when invoking this script."
+  fi
+  log "downloading ${MODEL_ID} -> ${MODEL_DIR}  (one-time, several minutes)"
+  mkdir -p "${MODEL_DIR}"
+  HF_HUB_ENABLE_HF_TRANSFER=1 huggingface-cli download "${MODEL_ID}" \
+    --local-dir "${MODEL_DIR}" \
+    --local-dir-use-symlinks False
+  [ -f "${MODEL_DIR}/config.json" ] || fail "download finished but ${MODEL_DIR}/config.json is missing; check the HF repo id and disk space."
+fi
+
+# ---- defensive cleanup of prior run state ---------------------------------
+# Kill any orphan vLLM workers from an interrupted prior run; their GPU
+# memory and ports would otherwise interfere with this run's preflight.
+pkill -9 -f "vllm.entrypoints.openai.api_server" 2>/dev/null || true
+sleep 1
 
 # Verify none of the ports we're about to use are already taken by some other
 # process on the host (nginx on RunPod, leftover vLLM, etc.). A silent vLLM
@@ -107,8 +149,9 @@ done
 # Wipe the WHOLE OUT_DIR (not just specific files) so an scp -r afterwards
 # never produces a nested 'results/' directory inside an existing one. If a
 # wrapper (e.g. concurrency-sweep.sh) wants to keep prior data, it should
-# point OUT_DIR at a fresh subdir per call.
-rm -rf "${OUT_DIR}"
+# point OUT_DIR at a fresh subdir per call. Also wipe vLLM logs so a fresh
+# tail -f /tmp/vllm-logs/w0.log shows just this run.
+rm -rf "${OUT_DIR}" /tmp/vllm-logs
 mkdir -p "${OUT_DIR}/raw" /tmp/vllm-logs
 
 ports=()

@@ -34,6 +34,11 @@ SESSIONS_LIST="${SESSIONS_LIST:-4 8 12 16 24}"
 SWEEP_OUT="bench/results-sweep"
 
 short=$(basename "$MODEL_DIR")  # e.g. qwen2.5-7b
+
+# Wipe this model's previous sweep tree (if any) so an scp -r afterwards
+# pulls a clean dataset. cloud-vllm.sh wipes its OUT_DIR per point; this
+# wipes the parent.
+rm -rf "$SWEEP_OUT/$short"
 mkdir -p "$SWEEP_OUT/$short"
 
 START_TIME=$(date +%s)
