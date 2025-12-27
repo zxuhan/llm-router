@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Hero chart: side-by-side concurrency sweep at two model sizes.
+Side-by-side concurrency-sweep chart, two model sizes.
 
-Reads two bench-results-sweep/<model>/sessions=N/ trees (one per model size)
-and renders a single PNG with two subplots, so the README shows the same
-"PA stays flat under load" property at two scales.
+Reads two bench-results-sweep/<model>/sessions=N/ trees and renders one PNG
+with two subplots, styled to match modern AI-infra README aesthetics
+(no top/right spines, soft grid, muted baselines, single accent series).
 
 Usage:
     python3 bench/scripts/hero-cloud.py \\
@@ -22,15 +22,69 @@ import statistics
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 
-# (color, marker, label, zorder, linewidth)
-STRATEGY_STYLE = {
-    "roundrobin":  ("#888888", "o", "round-robin",         2, 1.5),
-    "random":      ("#bbbbbb", "s", "random",              2, 1.5),
-    "leastloaded": ("#555555", "^", "least-loaded",        3, 1.5),
-    "prefixaware": ("#0f9d8a", "D", "prefix-aware (ours)", 5, 2.8),
+# Visual language: muted greyscale baselines, single teal accent for ours.
+# Keeps the eye on prefixaware without screaming.
+PALETTE = {
+    "roundrobin":  "#94a3b8",   # slate-400
+    "random":      "#cbd5e1",   # slate-300
+    "leastloaded": "#475569",   # slate-600
+    "prefixaware": "#0d9488",   # teal-600
 }
+LABELS = {
+    "roundrobin":  "round-robin",
+    "random":      "random",
+    "leastloaded": "least-loaded",
+    "prefixaware": "prefix-aware",
+}
+MARKERS = {
+    "roundrobin": "o", "random": "s", "leastloaded": "^", "prefixaware": "D",
+}
+ZORDER = {"roundrobin": 2, "random": 2, "leastloaded": 3, "prefixaware": 5}
+LINEWIDTH = {"roundrobin": 1.4, "random": 1.4, "leastloaded": 1.4, "prefixaware": 2.6}
+
+
+def apply_modern_style():
+    """Install rcParams once. Closer to modern data-viz chart aesthetics."""
+    mpl.rcParams.update({
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Inter", "Helvetica Neue", "Arial", "DejaVu Sans"],
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.spines.left": False,
+        "axes.spines.bottom": True,
+        "axes.edgecolor": "#cbd5e1",
+        "axes.linewidth": 0.8,
+        "axes.grid": True,
+        "axes.grid.axis": "y",
+        "grid.color": "#e2e8f0",
+        "grid.linewidth": 0.7,
+        "grid.alpha": 1.0,
+        "axes.labelcolor": "#1e293b",
+        "axes.labelsize": 11,
+        "axes.titlesize": 13,
+        "axes.titleweight": "semibold",
+        "axes.titlecolor": "#0f172a",
+        "xtick.color": "#475569",
+        "ytick.color": "#475569",
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "xtick.major.size": 0,
+        "ytick.major.size": 0,
+        "xtick.major.pad": 6,
+        "ytick.major.pad": 6,
+        "legend.fontsize": 10,
+        "legend.frameon": False,
+        "legend.labelcolor": "#1e293b",
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "figure.dpi": 160,
+        "savefig.dpi": 200,
+        "savefig.bbox": "tight",
+        "savefig.facecolor": "white",
+    })
 
 
 def sessions_from_dirname(name: str) -> int | None:
@@ -50,16 +104,14 @@ def load_strategy_runs(sessions_dir: Path, strategy: str) -> list[dict]:
 
 
 def gather_series(model_root: Path):
-    """Return {strategy -> ([sessions...], [p50_ms...], [stddev_ms...])}."""
     points = []
     for d in sorted(model_root.iterdir(), key=lambda d: sessions_from_dirname(d.name) or 0):
         n = sessions_from_dirname(d.name)
         if n is None:
             continue
         points.append((n, d))
-
-    series: dict[str, tuple[list[int], list[float], list[float]]] = {}
-    for strategy in STRATEGY_STYLE:
+    series = {}
+    for strategy in PALETTE:
         xs, ys, errs = [], [], []
         for sessions, sd in points:
             summaries = load_strategy_runs(sd, strategy)
@@ -73,50 +125,79 @@ def gather_series(model_root: Path):
     return series
 
 
-def draw(ax, model_root: Path, title: str):
+def draw(ax, model_root: Path, title: str, show_legend: bool, headline_text: str):
     series = gather_series(model_root)
-    for strategy, (color, marker, label, zorder, lw) in STRATEGY_STYLE.items():
+    for strategy in PALETTE:
         xs, ys, errs = series[strategy]
         if not xs:
             continue
-        ax.errorbar(xs, ys, yerr=errs, color=color, marker=marker, label=label,
-                    linewidth=lw, capsize=4, zorder=zorder, markersize=6.5)
-    ax.set_xlabel("Concurrent sessions (4 workers)", fontsize=11)
-    ax.set_ylabel("TTFT p50 (ms)  --  lower is better", fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.grid(True, alpha=0.25)
+        ax.errorbar(
+            xs, ys, yerr=errs,
+            color=PALETTE[strategy], marker=MARKERS[strategy], label=LABELS[strategy],
+            linewidth=LINEWIDTH[strategy], capsize=3, zorder=ZORDER[strategy],
+            markersize=6.5, markeredgewidth=0,
+            elinewidth=0.9, ecolor=PALETTE[strategy], alpha=0.95,
+        )
+
+    ax.set_title(title, pad=12, loc="left")
+    ax.set_xlabel("Concurrent sessions (4 workers)")
+    ax.set_ylabel("TTFT p50 (ms)")
     ax.set_xticks([4, 8, 12, 16, 24])
-    # Annotate the rightmost PA point so the eye lands on the headline.
-    if series.get("prefixaware") and series["prefixaware"][0]:
-        x_last = series["prefixaware"][0][-1]
-        y_last = series["prefixaware"][1][-1]
-        ax.annotate(f"PA p50 = {y_last:.0f} ms",
-                    xy=(x_last, y_last), xytext=(-90, -22),
-                    textcoords="offset points",
-                    fontsize=10, color="#0f9d8a", fontweight="bold",
-                    arrowprops=dict(arrowstyle="-", color="#0f9d8a", lw=1, alpha=0.6))
+
+    # Headline text in the corner: cleaner than an annotation arrow.
+    ax.text(
+        0.98, 0.04, headline_text,
+        transform=ax.transAxes,
+        ha="right", va="bottom",
+        fontsize=10, color="#0d9488", fontweight="semibold",
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="#f0fdfa",
+                  edgecolor="#99f6e4", linewidth=0.8),
+    )
+
+    if show_legend:
+        leg = ax.legend(loc="upper left", borderpad=0.4, handletextpad=0.5,
+                        labelspacing=0.4)
+        for text in leg.get_texts():
+            text.set_color("#1e293b")
+
+
+def headline_for(model_root: Path) -> str:
+    """Compute 'PA p50 = X ms (slope +Y ms)' for the corner annotation."""
+    series = gather_series(model_root)
+    xs, ys, _ = series["prefixaware"]
+    if not xs or len(ys) < 2:
+        return ""
+    slope = ys[-1] - ys[0]
+    return f"prefix-aware: +{slope:.0f} ms across 6x concurrency"
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--left",  required=True, help="path to first model's sweep dir")
+    ap.add_argument("--left",  required=True)
     ap.add_argument("--left-title",  default="Left")
-    ap.add_argument("--right", required=True, help="path to second model's sweep dir")
+    ap.add_argument("--right", required=True)
     ap.add_argument("--right-title", default="Right")
-    ap.add_argument("--out",   required=True, help="output PNG path")
+    ap.add_argument("--out",   required=True)
     args = ap.parse_args()
 
-    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(14, 5.2), sharey=False)
-    draw(ax_l, Path(args.left),  args.left_title)
-    draw(ax_r, Path(args.right), args.right_title)
+    apply_modern_style()
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13, 4.6))
 
-    # One legend, on the left subplot, top-left.
-    ax_l.legend(loc="upper left", framealpha=0.95, fontsize=10)
+    draw(ax_l, Path(args.left),  args.left_title,
+         show_legend=True,  headline_text=headline_for(Path(args.left)))
+    draw(ax_r, Path(args.right), args.right_title,
+         show_legend=False, headline_text=headline_for(Path(args.right)))
 
-    fig.suptitle("Routing strategy vs concurrency  --  same algorithm, two model sizes",
-                 fontsize=13, y=1.02)
-    fig.tight_layout()
-    fig.savefig(args.out, dpi=160, bbox_inches="tight")
+    fig.suptitle("Routing strategy vs concurrency, on 4x A100 80GB SXM",
+                 fontsize=14, fontweight="semibold", color="#0f172a", y=1.02)
+    fig.text(
+        0.5, -0.06,
+        "vLLM 0.6.4 with prefix caching, 3 seeds per point, mean +/- 1 stddev. Lower is better.",
+        ha="center", fontsize=9.5, color="#64748b",
+    )
+
+    fig.tight_layout(w_pad=4.0)
+    fig.savefig(args.out)
     print(f"wrote {args.out}")
 
 
