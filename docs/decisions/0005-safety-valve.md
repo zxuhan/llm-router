@@ -1,7 +1,5 @@
 # ADR 0005: Safety valve for saturated workers
 
-Status: accepted, 2026-03
-
 ## Context
 
 Pinning every request that shares a prefix to the same worker is fine until

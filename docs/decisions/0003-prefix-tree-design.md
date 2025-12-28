@@ -1,7 +1,5 @@
 # ADR 0003: Compressed radix tree, one per worker, behind RWMutex
 
-Status: accepted, 2026-03
-
 ## Context
 
 The router needs an index of "what each worker probably already has in its

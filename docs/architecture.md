@@ -60,27 +60,27 @@ sequenceDiagram
     participant Client
     participant Proxy as proxy.Handler
     participant Router as router.Router
-    participant Tree as prefixtree.Tree (per worker)
-    participant Backend as backend.Backend (chosen)
+    participant Tree as Tree per worker
+    participant Backend as chosen backend
 
-    Client->>Proxy: POST /v1/chat/completions (body)
-    Proxy->>Proxy: read body, extract prompt string
-    Proxy->>Router: Choose(ctx, prompt)
-    Router->>Tree: LongestMatch(chunks)  (for each backend)
+    Client->>Proxy: POST chat completions request
+    Proxy->>Proxy: read body and extract prompt
+    Proxy->>Router: Choose with prompt
+    Router->>Tree: LongestMatch over chunks
     Tree-->>Router: match length per backend
-    Router-->>Proxy: Decision{Backend, MatchChunks, Reason}
+    Router-->>Proxy: Decision with backend and reason
 
-    Proxy->>Tree: Update(prompt, chosen)  (writes the chunks into chosen worker tree)
-    Proxy->>Backend: Acquire(); Do(ctx, request)
-    Backend-->>Proxy: HTTP response (status + headers)
-    Proxy-->>Client: status + headers (incl. X-Router-Backend, X-Router-Reason)
+    Proxy->>Tree: Update with chosen worker
+    Proxy->>Backend: Acquire then dispatch HTTP
+    Backend-->>Proxy: HTTP response
+    Proxy-->>Client: status and X-Router headers
     loop streaming body
         Backend-->>Proxy: SSE chunk
-        Proxy-->>Client: SSE chunk (Flusher.Flush)
+        Proxy-->>Client: SSE chunk via flusher
     end
     Backend-->>Proxy: EOF
-    Proxy->>Backend: Release()
-    Proxy->>Proxy: emit RequestStats to Recorder(s)
+    Proxy->>Backend: Release
+    Proxy->>Proxy: emit RequestStats to Recorders
 ```
 
 The two important properties to notice:
@@ -122,10 +122,10 @@ The tree supports:
 
 ```mermaid
 flowchart TD
-    A[insert / longest-match] --> B{root}
-    B -->|first hash| N1[edge: a, b, c]
-    N1 -->|first hash| N2[edge: d, e]
-    N1 -->|first hash| N3[edge: f]
+    A["insert or longest-match"] --> B{root}
+    B -->|first hash| N1["edge a b c"]
+    N1 -->|next hash| N2["edge d e"]
+    N1 -->|next hash| N3["edge f"]
     N2 -.terminal.-> L1[(LRU)]
     N3 -.terminal.-> L1
 ```

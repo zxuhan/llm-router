@@ -1,7 +1,5 @@
 # ADR 0008: Random tie-breaking among equal-prefix workers
 
-Status: accepted, 2026-05
-
 ## Context
 
 ADR 0005 specified a deterministic sort key for the `PrefixAware`

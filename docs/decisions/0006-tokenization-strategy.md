@@ -1,7 +1,5 @@
 # ADR 0006: Hash fixed-size byte chunks instead of running a real tokenizer
 
-Status: accepted, 2026-03
-
 ## Context
 
 The prefix tree needs a deterministic mapping from prompt text to a sequence

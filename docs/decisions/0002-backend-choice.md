@@ -1,7 +1,5 @@
 # ADR 0002: Default to llama.cpp's HTTP server as the upstream backend
 
-Status: accepted, 2026-03
-
 ## Context
 
 The router is OpenAI-compatible on the front. To demonstrate the routing

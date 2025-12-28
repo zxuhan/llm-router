@@ -1,7 +1,5 @@
 # ADR 0004: LRU eviction with chunk-budget, prune dead branches, no rebalancing
 
-Status: accepted, 2026-03
-
 ## Context
 
 The router's tree predicts a worker's KV-cache state. Real KV caches are

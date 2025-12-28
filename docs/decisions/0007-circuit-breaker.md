@@ -1,7 +1,5 @@
 # ADR 0007: Two-state circuit breaker per backend
 
-Status: accepted, 2026-04
-
 ## Context
 
 A worker can become unresponsive (process crashed, GPU stuck, deadlock,

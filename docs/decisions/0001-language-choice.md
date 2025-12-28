@@ -1,7 +1,5 @@
 # ADR 0001: Implement the router in Go (rather than Rust)
 
-Status: accepted, 2026-03
-
 ## Context
 
 The router is a concurrent HTTP service that proxies streaming responses,
