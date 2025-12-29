@@ -29,7 +29,15 @@ vendor/
 
 # Bench raw outputs (commit only summarized results.md)
 /bench/results/
+/bench/results-*/
 /bench/out/
+
+# Local copies of cloud bench data pulled by scp. The per-model trees
+# the chart scripts read from live here; kept locally but never committed.
+# What enters the repo is the summarized real.md and the rendered PNGs
+# in docs/.
+/bench-results-cloud*/
+/bench-results-sweep*/
 
 # AI assistant scratch (local only)
 CLAUDE.md
