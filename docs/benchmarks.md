@@ -16,7 +16,7 @@ This document describes how to reproduce the comparison numbers in
 
 ```bash
 make build
-bench/scripts/run.sh
+scripts/bench/run.sh
 ```
 
 This generates a deterministic synthetic trace, runs each strategy in turn
@@ -26,7 +26,7 @@ against three fake backends, and writes:
 - `docs/results.md` (human-readable; the file you can commit if you want
   to publish your run)
 
-Tunables (env vars consumed by `bench/scripts/run.sh`):
+Tunables (env vars consumed by `scripts/bench/run.sh`):
 
 | Var | Default | Meaning |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ Run `go run ./cmd/bench --help` for the full flag list (including
 
 ## Real-workers benchmark
 
-`bench/scripts/real-llm.sh` does the orchestration: it spins up two
+`scripts/bench/real-llm.sh` does the orchestration: it spins up two
 `llama-server` instances against a small GGUF, runs each routing strategy
 with FRESH workers (so KV caches start empty for each run), and aggregates
 per-strategy JSON summaries into one Markdown report at
@@ -65,7 +65,7 @@ the 0.5 B Qwen model is the smallest reliably-available option.
 
 ```bash
 make build
-bash bench/scripts/real-llm.sh
+bash scripts/bench/real-llm.sh
 ```
 
 Outputs:
@@ -91,7 +91,7 @@ Outputs:
 
 ```bash
 RUNS=3 SESSIONS=6 TURNS=3 SYS_LEN=2048 MAX_TOKENS=8 SEED=17 \
-  bash bench/scripts/real-llm.sh
+  bash scripts/bench/real-llm.sh
 ```
 
 The aggregator picks up `--multi` automatically when `RUNS>1` and writes
@@ -100,13 +100,13 @@ and RPS, plus a per-run detail table. Pool the raw per-request samples
 into a single CDF with:
 
 ```bash
-python3 bench/scripts/plot.py --input bench/results --out docs/cdf.png
+python3 scripts/plot/plot.py --input bench/results --out docs/images/cdf.png
 ```
 
 ### 5. Safety-valve ablation
 
 ```bash
-SAT_VALUES="1 4 8 9999" bash bench/scripts/ablate-saturation.sh
+SAT_VALUES="1 4 8 9999" bash scripts/bench/ablate-saturation.sh
 ```
 
 Runs `prefixaware` four times with different `saturation_inflight`

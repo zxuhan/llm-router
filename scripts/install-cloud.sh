@@ -95,4 +95,4 @@ python3 -c "import vllm; print('vllm', vllm.__version__)"
 ls -lah "${MODEL_DIR}" | head -8
 ls -lah bin/
 
-log "ready. Next step: bash bench/scripts/cloud-vllm.sh"
+log "ready. Next step: bash scripts/bench/cloud-vllm.sh"

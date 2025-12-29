@@ -6,12 +6,12 @@ Two-panel composition designed for at-a-glance scanning:
     from the multi-seed runs. Prefix-aware emphasised.
   - Right panel: upstream KV-cache hit rate (higher = better), same layout.
 
-Uses the JSON summaries that bench/scripts/real-llm.sh writes (one per
+Uses the JSON summaries that scripts/bench/real-llm.sh writes (one per
 (strategy, run) when RUNS > 1). No matplotlib styling rabbit-hole; just
 clean, readable, professional.
 
 Usage:
-    python3 bench/scripts/hero.py [--input bench/results] [--out docs/hero.png]
+    python3 scripts/plot/hero.py [--input bench/results] [--out docs/images/hero.png]
 """
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ def panel_bars(ax, data, metric, *, title, ylabel, value_fmt, lower_is_better):
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--input", default="bench/results")
-    p.add_argument("--out", default="docs/hero.png")
+    p.add_argument("--out", default="docs/images/hero.png")
     args = p.parse_args()
 
     data = gather(Path(args.input))

@@ -2,7 +2,7 @@
 
 End-to-end numbers from the canonical cloud benchmark. The runbook for
 reproducing this is in [cloud-bench.md](cloud-bench.md). The script that
-produced the data is [`bench/scripts/concurrency-sweep.sh`](../bench/scripts/concurrency-sweep.sh).
+produced the data is [`scripts/bench/concurrency-sweep.sh`](../scripts/bench/concurrency-sweep.sh).
 
 ## Setup
 
@@ -180,20 +180,20 @@ bash scripts/install-cloud.sh                         # Go + vLLM + pinned deps
 tmux new -s bench                                     # survives SSH disconnects
 
 # 7B sweep, ~1.5 hr, ~$10
-MODEL_DIR=models/qwen2.5-7b bash bench/scripts/concurrency-sweep.sh
+MODEL_DIR=models/qwen2.5-7b bash scripts/bench/concurrency-sweep.sh
 
 # 14B sweep, ~2 hr, ~$13
 rm -rf models/qwen2.5-7b   # free disk
-MODEL_DIR=models/qwen2.5-14b bash bench/scripts/concurrency-sweep.sh
+MODEL_DIR=models/qwen2.5-14b bash scripts/bench/concurrency-sweep.sh
 ```
 
-Or one shot for both: `bash bench/scripts/full-bench.sh`.
+Or one shot for both: `bash scripts/bench/full-bench.sh`.
 
 After SCP back to the laptop:
 
 ```bash
-/tmp/plot-venv/bin/python bench/scripts/hero-cloud.py \
+/tmp/plot-venv/bin/python scripts/plot/hero-cloud.py \
   --left  bench-results-sweep-7B/qwen2.5-7b   --left-title  "Qwen2.5-7B" \
   --right bench-results-sweep-14B/qwen2.5-14b --right-title "Qwen2.5-14B" \
-  --out docs/hero-cloud.png
+  --out docs/images/hero-cloud.png
 ```

@@ -9,7 +9,7 @@
 #                     or loses badly (poorly-tuned)
 #
 # Usage (from repo root, on the pod):
-#   bash bench/scripts/concurrency-sweep.sh
+#   bash scripts/bench/concurrency-sweep.sh
 #
 # Output:
 #   bench/results-sweep/<MODEL_SHORT>/sessions=N/
@@ -59,7 +59,7 @@ for sessions in $SESSIONS_LIST; do
   if SESSIONS="$sessions" \
        MODEL_DIR="$MODEL_DIR" \
        OUT_DIR="$out_dir" \
-       bash bench/scripts/cloud-vllm.sh; then
+       bash scripts/bench/cloud-vllm.sh; then
     COMPLETED+=("sessions=$sessions")
   else
     echo "[sweep] WARN: sessions=$sessions failed; recording and moving on" >&2
@@ -112,7 +112,7 @@ PRE-FLIGHT CHECKS (do all THREE before terminating):
 
 ON YOUR LAPTOP, AFTER SCP:
 
-   python3 bench/scripts/sweep-plot.py \\
+   python3 scripts/plot/sweep-plot.py \\
        --input bench-results-sweep/$short \\
        --out docs/sweep-${short}.png
 

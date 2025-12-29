@@ -8,7 +8,7 @@
 //   --multi:            multiple JSONs per strategy (one per seed). Output
 //                       includes mean and stddev for the headline metrics.
 //
-// Used by bench/scripts/real-llm.sh; gated by `//go:build ignore` so it does
+// Used by scripts/bench/real-llm.sh; gated by `//go:build ignore` so it does
 // not participate in `go build ./...`.
 package main
 

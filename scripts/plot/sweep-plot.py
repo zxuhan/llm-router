@@ -3,9 +3,9 @@
 Single-panel concurrency-sweep chart for one model.
 
 Usage:
-    python3 bench/scripts/sweep-plot.py \\
+    python3 scripts/plot/sweep-plot.py \\
         --input bench-results-sweep/qwen2.5-7b \\
-        --out docs/sweep-7b.png
+        --out docs/images/sweep-7b.png
 """
 
 from __future__ import annotations

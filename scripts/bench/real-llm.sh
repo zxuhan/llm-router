@@ -10,7 +10,7 @@
 #   - the bench binary built (`make bench-bin`)
 #
 # Usage:
-#   bash bench/scripts/real-llm.sh
+#   bash scripts/bench/real-llm.sh
 #
 # Outputs:
 #   bench/results/real-<strategy>.json     (per-strategy JSON summary)
@@ -38,7 +38,7 @@ CTX_SIZE="${CTX_SIZE:-4096}"
 RUNS="${RUNS:-1}"
 # SATURATION lets the orchestrator pass a non-default saturation_inflight
 # to the prefix-aware strategy without editing the bench binary; useful
-# for the safety-valve ablation in bench/scripts/ablate-saturation.sh.
+# for the safety-valve ablation in scripts/bench/ablate-saturation.sh.
 SATURATION="${SATURATION:-}"
 
 OUT_DIR="bench/results"
@@ -138,14 +138,14 @@ stop_workers
 # When RUNS>1 the aggregator computes mean and stddev across runs per
 # strategy.
 if [ "$RUNS" -eq 1 ]; then
-  go run ./bench/scripts/aggregate.go \
+  go run ./scripts/bench/aggregate.go \
     "$OUT_DIR"/real-roundrobin.json \
     "$OUT_DIR"/real-random.json \
     "$OUT_DIR"/real-leastloaded.json \
     "$OUT_DIR"/real-prefixaware.json \
     > "$OUT_DIR/real.md"
 else
-  go run ./bench/scripts/aggregate.go --multi \
+  go run ./scripts/bench/aggregate.go --multi \
     "$OUT_DIR"/real-roundrobin-run*.json \
     "$OUT_DIR"/real-random-run*.json \
     "$OUT_DIR"/real-leastloaded-run*.json \

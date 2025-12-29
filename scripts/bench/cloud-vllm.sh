@@ -284,7 +284,7 @@ ELAPSED=$((END_TIME - START_TIME))
 
 # ---- aggregate -------------------------------------------------------------
 log "aggregating multi-seed report"
-go run ./bench/scripts/aggregate.go --multi \
+go run ./scripts/bench/aggregate.go --multi \
   "${OUT_DIR}"/real-roundrobin-run*.json \
   "${OUT_DIR}"/real-random-run*.json \
   "${OUT_DIR}"/real-leastloaded-run*.json \
@@ -327,11 +327,11 @@ PRE-FLIGHT CHECKS (do all THREE before terminating):
 
 ON YOUR LAPTOP, AFTER SCP:
 
-   python3 bench/scripts/hero.py  --input bench-results-cloud --out docs/hero-cloud.png
-   python3 bench/scripts/plot.py  --input bench-results-cloud --out docs/cdf-cloud.png
+   python3 scripts/plot/hero.py  --input bench-results-cloud --out docs/images/hero-cloud.png
+   python3 scripts/plot/plot.py  --input bench-results-cloud --out docs/images/cdf-cloud.png
    cp bench-results-cloud/real.md docs/results-cloud.md
 
-   git add docs/hero-cloud.png docs/cdf-cloud.png docs/results-cloud.md
+   git add docs/images/hero-cloud.png docs/images/cdf-cloud.png docs/results-cloud.md
    git commit -m "bench: cloud results on ${N_WORKERS}× GPU + vLLM + ${SERVED_MODEL_NAME}"
    git push
 

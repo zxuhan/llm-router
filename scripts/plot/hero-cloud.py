@@ -10,10 +10,10 @@ no top/right/left spines, soft horizontal grid only, muted slate baselines,
 single teal accent for the headline series.
 
 Usage:
-    python3 bench/scripts/hero-cloud.py \\
+    python3 scripts/plot/hero-cloud.py \\
         --top    bench-results-sweep-7B/qwen2.5-7b   --top-title  "Qwen2.5-7B" \\
         --bottom bench-results-sweep-14B/qwen2.5-14b --bottom-title "Qwen2.5-14B" \\
-        --out docs/hero-cloud.png
+        --out docs/images/hero-cloud.png
 """
 
 from __future__ import annotations

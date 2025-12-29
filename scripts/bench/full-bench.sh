@@ -20,7 +20,7 @@
 #   32B -> ~64 GB (needs >= 100 GB container disk; commented out below)
 #
 # Usage (from repo root, on the pod):
-#   bash bench/scripts/full-bench.sh
+#   bash scripts/bench/full-bench.sh
 #
 # Tunables (env):
 #   MODELS_TSV     override the default model list (whitespace-separated:
@@ -77,7 +77,7 @@ while IFS=$' \t' read -r model_id local_dir _rest; do
   if MODEL_ID="$model_id" \
        MODEL_DIR="$local_dir" \
        SESSIONS_LIST="$SESSIONS_LIST" \
-       bash bench/scripts/concurrency-sweep.sh; then
+       bash scripts/bench/concurrency-sweep.sh; then
     COMPLETED+=("$short")
   else
     echo "[full-bench] WARN: $short failed; recording and moving on" >&2
@@ -131,7 +131,7 @@ ON YOUR LAPTOP, AFTER SCP:
 
    for short in qwen2.5-7b qwen2.5-14b; do
      [ -d "bench-results-sweep/\$short" ] && \\
-       python3 bench/scripts/sweep-plot.py \\
+       python3 scripts/plot/sweep-plot.py \\
          --input "bench-results-sweep/\$short" \\
          --out "docs/sweep-\${short}.png"
    done

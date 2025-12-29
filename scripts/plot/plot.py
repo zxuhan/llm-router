@@ -2,7 +2,7 @@
 """Plot TTFT and total-latency CDFs from raw per-request JSONL.
 
 Usage:
-    python3 bench/scripts/plot.py [--input bench/results/raw] [--out docs/cdf.png]
+    python3 scripts/plot/plot.py [--input bench/results/raw] [--out docs/images/cdf.png]
 
 Reads <input>/<strategy>.jsonl files (one JSON object per line, as
 emitted by `cmd/bench --raw-results`) and writes a single PNG with two
@@ -99,7 +99,7 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--input", default="bench/results/raw",
                    help="directory containing <strategy>.jsonl files")
-    p.add_argument("--out", default="docs/cdf.png",
+    p.add_argument("--out", default="docs/images/cdf.png",
                    help="output PNG path")
     p.add_argument("--title", default="LLM router latency CDF (Qwen2.5-1.5B, 3 workers, M1 Pro)",
                    help="figure title")

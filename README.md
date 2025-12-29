@@ -1,27 +1,32 @@
 <div align="center">
 
-# CacheRoute
+# llm-cache-router
 
 **Cache-aware load balancer for OpenAI-compatible LLM servers, in Go.**
 
-[![Go](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![License](https://img.shields.io/github/license/zxuhan/llm-router?color=22c55e)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/zxuhan/llm-router/ci.yml?branch=main&label=ci)](https://github.com/zxuhan/llm-router/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A595%25-22c55e)](.github/workflows/ci.yml)
-[![Stars](https://img.shields.io/github/stars/zxuhan/llm-router?style=flat&color=eab308&logo=github)](https://github.com/zxuhan/llm-router/stargazers)
+[![Go](https://img.shields.io/badge/go-1.23%2B-00ADD8?style=for-the-badge&logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/zxuhan/llm-router?style=for-the-badge&color=22c55e)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/zxuhan/llm-router/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/zxuhan/llm-router/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-97.9%25-22c55e?style=for-the-badge)](.github/workflows/ci.yml)
+
+[![Go Report Card](https://goreportcard.com/badge/github.com/zxuhan/llm-router?style=flat-square)](https://goreportcard.com/report/github.com/zxuhan/llm-router)
+[![pkg.go.dev](https://img.shields.io/badge/pkg.go.dev-reference-007D9C?style=flat-square&logo=go&logoColor=white)](https://pkg.go.dev/github.com/zxuhan/llm-router)
+[![upstream: vLLM](https://img.shields.io/badge/upstream-vLLM%200.6.4-ff6f00?style=flat-square)](https://github.com/vllm-project/vllm)
+[![upstream: llama.cpp](https://img.shields.io/badge/upstream-llama.cpp-9333ea?style=flat-square)](https://github.com/ggerganov/llama.cpp)
+[![metrics: Prometheus](https://img.shields.io/badge/metrics-Prometheus-E6522C?style=flat-square&logo=prometheus&logoColor=white)](internal/metrics/metrics.go)
 
 </div>
 
-CacheRoute sits in front of a pool of OpenAI-compatible inference servers
-(vLLM, llama.cpp, mlx-lm, anything that speaks `/v1/chat/completions`) and
-routes each chat completion to the worker that already holds its prefix in
-KV cache. Skipping the prefill stage on cache hits keeps time-to-first-token
-bounded as concurrency rises. The benchmark below was run on **4× A100 80GB
-SXM with vLLM 0.6.4 and Qwen2.5 at two model sizes**, total cloud cost ~$25
-to reproduce.
+`llm-cache-router` is a Go reverse proxy that sits in front of a pool of
+OpenAI-compatible inference servers and routes each `/v1/chat/completions`
+request to the worker that already holds its prompt prefix in KV cache.
+Skipping the prefill stage on cache hits keeps time-to-first-token bounded
+as concurrency rises. The benchmark below was run against vLLM 0.6.4 on
+4× A100 80GB SXM with Qwen2.5-7B and Qwen2.5-14B; total cloud cost was
+about \$25.
 
 <p align="center">
-  <img src="docs/hero-cloud.png" alt="Vertically stacked concurrency sweep at Qwen2.5-7B and Qwen2.5-14B. Prefix-aware (teal) holds the flattest TTFT line under load; baselines climb 2 to 3x faster." width="100%"/>
+  <img src="docs/images/hero-cloud.png" alt="Vertically stacked concurrency sweep at Qwen2.5-7B and Qwen2.5-14B. Prefix-aware (teal) holds the flattest TTFT line under load; baselines climb 2 to 3x faster." width="100%"/>
 </p>
 
 ## Quickstart
@@ -38,7 +43,7 @@ curl -L -o models/qwen2.5-1.5b.gguf \
 make build
 MODEL=models/qwen2.5-1.5b.gguf WORKER_PORTS="8001 8002 8003" \
   RUNS=3 SESSIONS=6 TURNS=3 SYS_LEN=2048 SEED=17 \
-  bash bench/scripts/real-llm.sh
+  bash scripts/bench/real-llm.sh
 
 cat bench/results/real.md
 ```
@@ -50,7 +55,7 @@ git clone https://github.com/zxuhan/llm-router.git
 cd llm-router
 bash scripts/install-cloud.sh
 tmux new -s bench
-bash bench/scripts/full-bench.sh
+bash scripts/bench/full-bench.sh
 # detach Ctrl+b d, reattach: tmux attach -t bench
 ```
 
@@ -61,10 +66,10 @@ port-collision diagnostics, scp recipe): [`docs/cloud-bench.md`](docs/cloud-benc
 
 > [!NOTE]
 > Numbers are mean ± stddev across three seeds at each concurrency point.
-> Trace shape: 12 to 24 sessions, 8 turns each, 6 KB shared system prompt,
-> max_tokens=64. Three seeds is a small sample and a few intermediate
-> points have visibly noisy error bars in the chart above; the headline
-> is the slope, not any single point.
+> Trace shape: 4 to 24 sessions, 8 turns each, 6 KB shared system prompt,
+> max_tokens=64. Three seeds is a small sample; a few intermediate points
+> have visibly noisy error bars in the chart above. The headline is the
+> slope, not any single point.
 
 ### Headline: TTFT slope under load (sessions=4 to sessions=24)
 
@@ -88,7 +93,7 @@ prefill cost.
 | leastloaded  | 94.22% | 171 ms | 2.12 s | 2.29 s | 27.6 |
 | **prefixaware** | **94.88%** | **166 ms** | **2.13 s** | **2.25 s** | 26.8 |
 
-Prefix-aware wins p50 by 14% over round-robin and 37% over random, with the
+Prefix-aware wins p50 by 14% over round-robin and 37% over random with the
 lowest p99. Upstream KV cache hit rate stays at 94 to 95% across every
 concurrency point on every model size; baselines drift between 80 and 95%.
 
@@ -127,7 +132,7 @@ flowchart TD
 
     Client -->|"POST chat completions"| Proxy
 
-    subgraph Router["llm-router (Go service)"]
+    subgraph Router["llm-cache-router (Go service)"]
         direction TB
         Proxy["HTTP proxy<br/>SSE pass-through"]
         Strategy["Routing strategy<br/>roundrobin · random<br/>leastloaded · prefixaware"]
@@ -172,6 +177,26 @@ Prometheus metrics: [`docs/architecture.md`](docs/architecture.md). Eight
 ADRs covering language choice, backend abstraction, prefix tree design,
 LRU eviction, the safety valve, tokenization, the circuit breaker, and
 tie-break randomization: [`docs/decisions/`](docs/decisions/).
+
+## Layout
+
+```
+cmd/                     CLI binaries (router, bench, gen-traces, replay)
+internal/                Go packages (config, backend, prefixtree, router, proxy, ...)
+config/                  example yaml config
+scripts/
+    install-cloud.sh     one-shot pod setup
+    bench/               bench orchestrators (real-llm.sh, cloud-vllm.sh, ...)
+    plot/                matplotlib renderers (hero-cloud.py, sweep-plot.py, ...)
+docs/
+    architecture.md      package graph, request lifecycle, metrics list
+    benchmarks.md        local reproduction recipes
+    cloud-bench.md       cloud reproduction runbook
+    results.md           local M1 results
+    results-cloud.md     cloud A100 results, per-concurrency tables
+    decisions/           ADRs
+    images/              chart and gif assets
+```
 
 ## Limitations
 

@@ -85,7 +85,7 @@ MODEL_ID="meta-llama/Llama-3.1-8B-Instruct" MODEL_DIR=models/llama-8b \
 ## 4. Run the multi-seed bench
 
 ```bash
-bash bench/scripts/cloud-vllm.sh
+bash scripts/bench/cloud-vllm.sh
 ```
 
 Defaults:
@@ -171,22 +171,22 @@ matplotlib venv from earlier:
 
 ```bash
 # regenerate the headline visuals from cloud data
-python3 bench/scripts/hero.py --input bench-results-cloud --out docs/hero-cloud.png
-python3 bench/scripts/plot.py --input bench-results-cloud --out docs/cdf-cloud.png
+python3 scripts/plot/hero.py --input bench-results-cloud --out docs/images/hero-cloud.png
+python3 scripts/plot/plot.py --input bench-results-cloud --out docs/images/cdf-cloud.png
 
 # move the multi-seed Markdown report into docs/
 cp bench-results-cloud/real.md docs/results-cloud.md
 
 # commit + push
-git add docs/hero-cloud.png docs/cdf-cloud.png docs/results-cloud.md
+git add docs/images/hero-cloud.png docs/images/cdf-cloud.png docs/results-cloud.md
 git commit -m "bench: cloud results on 4× GPU + vLLM + Qwen2.5-7B"
 git push
 ```
 
-The cloud results live alongside the local ones (`docs/hero.png`,
-`docs/cdf.png`, `docs/results.md`) rather than overwriting them. You
+The cloud results live alongside the local ones (`docs/images/hero.png`,
+`docs/images/cdf.png`, `docs/results.md`) rather than overwriting them. You
 can decide later which set the README's hero should point at; my
-suggestion is to swap the README hero to `docs/hero-cloud.png` once
+suggestion is to swap the README hero to `docs/images/hero-cloud.png` once
 you have the cloud numbers (the local M1 Pro numbers stay around as a
 "smaller-scale reproducibility" reference).
 
@@ -195,7 +195,7 @@ you have the cloud numbers (the local M1 Pro numbers stay around as a
 >
 > ```bash
 > python3 -m venv /tmp/plot-venv && /tmp/plot-venv/bin/pip install matplotlib --quiet
-> /tmp/plot-venv/bin/python bench/scripts/hero.py --input bench-results-cloud --out docs/hero-cloud.png
+> /tmp/plot-venv/bin/python scripts/plot/hero.py --input bench-results-cloud --out docs/images/hero-cloud.png
 > ```
 
 ## 7. Terminate the pod

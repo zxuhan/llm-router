@@ -11,8 +11,8 @@ This document publishes three sets of measurements:
 3. **Saturation regime + smaller-model + fake-backend reference**:
    secondary scenarios that round out the picture.
 
-To repeat any of these runs: `bash bench/scripts/real-llm.sh` (set
-`RUNS=3` for multi-seed) or `bash bench/scripts/ablate-saturation.sh`
+To repeat any of these runs: `bash scripts/bench/real-llm.sh` (set
+`RUNS=3` for multi-seed) or `bash scripts/bench/ablate-saturation.sh`
 for the ablation. See `docs/benchmarks.md` for the full reproduction
 recipe.
 
@@ -232,23 +232,23 @@ MODEL=models/qwen2.5-1.5b.gguf \
   WORKER_PORTS="8001 8002 8003" \
   SESSIONS=6 TURNS=3 SYS_LEN=2048 MAX_TOKENS=8 SEED=17 \
   RUNS=3 \
-  bash bench/scripts/real-llm.sh
-/path/to/python bench/scripts/plot.py --input bench/results --out docs/cdf.png
+  bash scripts/bench/real-llm.sh
+/path/to/python scripts/plot/plot.py --input bench/results --out docs/images/cdf.png
 
 # safety-valve ablation
-SAT_VALUES="1 4 8 9999" bash bench/scripts/ablate-saturation.sh
+SAT_VALUES="1 4 8 9999" bash scripts/bench/ablate-saturation.sh
 
 # saturation regime (single N=200 run)
 SESSIONS=50 TURNS=4 SYS_LEN=2048 MAX_TOKENS=8 SEED=17 \
-  bash bench/scripts/real-llm.sh
+  bash scripts/bench/real-llm.sh
 
 # smaller-model reference
 curl -L -o models/qwen2.5-0.5b.gguf \
   https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
-SESSIONS=4 TURNS=4 SYS_LEN=2048 MAX_TOKENS=8 SEED=11 bash bench/scripts/real-llm.sh
+SESSIONS=4 TURNS=4 SYS_LEN=2048 MAX_TOKENS=8 SEED=11 bash scripts/bench/real-llm.sh
 
 # fake workers (no external dependencies)
-bash bench/scripts/run.sh
+bash scripts/bench/run.sh
 ```
 
 The real-LLM script restarts every `llama-server` worker between

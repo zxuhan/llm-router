@@ -10,9 +10,9 @@
 #   bench/results/ablation/abl-sat.md
 #
 # Usage:
-#   bash bench/scripts/ablate-saturation.sh
+#   bash scripts/bench/ablate-saturation.sh
 #
-# Requires the same llama-server install + model as bench/scripts/real-llm.sh.
+# Requires the same llama-server install + model as scripts/bench/real-llm.sh.
 
 set -euo pipefail
 
