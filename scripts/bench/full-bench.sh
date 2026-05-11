@@ -133,10 +133,10 @@ ON YOUR LAPTOP, AFTER SCP:
      [ -d "bench-results-sweep/\$short" ] && \\
        python3 scripts/plot/sweep-plot.py \\
          --input "bench-results-sweep/\$short" \\
-         --out "docs/sweep-\${short}.png"
+         --out "docs/images/sweep-\${short}.png"
    done
 
-   git add docs/sweep-*.png
+   git add docs/images/sweep-*.png
    git commit -m "bench: cloud concurrency sweep at 7B and 14B"
    git push
 

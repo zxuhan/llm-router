@@ -2,32 +2,22 @@
 
 # llm-cache-router
 
-**Cache-aware load balancer for OpenAI-compatible LLM servers, in Go.**
+<p align="center">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white">
+  <img alt="vLLM" src="https://img.shields.io/badge/vLLM-0.6.4-ff6f00">
+  <img alt="llama.cpp" src="https://img.shields.io/badge/llama.cpp-supported-9333ea">
+  <img alt="Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-Qwen2.5-FFD21E?logo=huggingface&logoColor=white">
+  <img alt="Prometheus" src="https://img.shields.io/badge/Prometheus-metrics-E6522C?logo=prometheus&logoColor=white">
+</p>
 
-[![Go](https://img.shields.io/badge/go-1.23%2B-00ADD8?style=for-the-badge&logo=go&logoColor=white)](go.mod)
-[![License](https://img.shields.io/github/license/zxuhan/llm-router?style=for-the-badge&color=22c55e)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/zxuhan/llm-router/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/zxuhan/llm-router/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-97.9%25-22c55e?style=for-the-badge)](.github/workflows/ci.yml)
+<p>
+  <strong>Cache-aware load balancer for OpenAI-compatible LLM servers, in Go.</strong><br/>
+  Sits in front of a pool of OpenAI-compatible inference servers (vLLM, llama.cpp, mlx-lm) and routes each <code>/v1/chat/completions</code> request to the worker that already holds its prompt prefix in KV cache, so prefill happens once per shared prefix rather than once per worker. The benchmark below was run against vLLM 0.6.4 on 4× A100 80GB SXM with Qwen2.5-7B and Qwen2.5-14B; total cloud cost was about $25.
+</p>
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/zxuhan/llm-router?style=flat-square)](https://goreportcard.com/report/github.com/zxuhan/llm-router)
-[![pkg.go.dev](https://img.shields.io/badge/pkg.go.dev-reference-007D9C?style=flat-square&logo=go&logoColor=white)](https://pkg.go.dev/github.com/zxuhan/llm-router)
-[![upstream: vLLM](https://img.shields.io/badge/upstream-vLLM%200.6.4-ff6f00?style=flat-square)](https://github.com/vllm-project/vllm)
-[![upstream: llama.cpp](https://img.shields.io/badge/upstream-llama.cpp-9333ea?style=flat-square)](https://github.com/ggerganov/llama.cpp)
-[![metrics: Prometheus](https://img.shields.io/badge/metrics-Prometheus-E6522C?style=flat-square&logo=prometheus&logoColor=white)](internal/metrics/metrics.go)
+<img src="docs/images/hero-cloud.png" alt="Vertically stacked concurrency sweep at Qwen2.5-7B and Qwen2.5-14B. Prefix-aware (teal) holds the flattest TTFT line under load; baselines climb 2 to 3x faster." width="100%"/>
 
 </div>
-
-`llm-cache-router` is a Go reverse proxy that sits in front of a pool of
-OpenAI-compatible inference servers and routes each `/v1/chat/completions`
-request to the worker that already holds its prompt prefix in KV cache.
-Skipping the prefill stage on cache hits keeps time-to-first-token bounded
-as concurrency rises. The benchmark below was run against vLLM 0.6.4 on
-4× A100 80GB SXM with Qwen2.5-7B and Qwen2.5-14B; total cloud cost was
-about \$25.
-
-<p align="center">
-  <img src="docs/images/hero-cloud.png" alt="Vertically stacked concurrency sweep at Qwen2.5-7B and Qwen2.5-14B. Prefix-aware (teal) holds the flattest TTFT line under load; baselines climb 2 to 3x faster." width="100%"/>
-</p>
 
 ## Quickstart
 
@@ -178,29 +168,32 @@ ADRs covering language choice, backend abstraction, prefix tree design,
 LRU eviction, the safety valve, tokenization, the circuit breaker, and
 tie-break randomization: [`docs/decisions/`](docs/decisions/).
 
-## Layout
+## Project structure
 
 ```
-cmd/                     CLI binaries (router, bench, gen-traces, replay)
-internal/                Go packages (config, backend, prefixtree, router, proxy, ...)
-config/                  example yaml config
-scripts/
-    install-cloud.sh     one-shot pod setup
-    bench/               bench orchestrators (real-llm.sh, cloud-vllm.sh, ...)
-    plot/                matplotlib renderers (hero-cloud.py, sweep-plot.py, ...)
-docs/
-    architecture.md      package graph, request lifecycle, metrics list
-    benchmarks.md        local reproduction recipes
-    cloud-bench.md       cloud reproduction runbook
-    results.md           local M1 results
-    results-cloud.md     cloud A100 results, per-concurrency tables
-    decisions/           ADRs
-    images/              chart and gif assets
+.
+├── cmd/                       CLI binaries: router, bench, gen-traces, replay
+├── internal/                  Go packages: config, backend, prefixtree, router, proxy, ...
+├── config/                    example yaml
+├── scripts/
+│   ├── install-cloud.sh       one-shot pod setup (Go + vLLM + pinned deps)
+│   ├── bench/                 orchestrators: real-llm.sh, cloud-vllm.sh, full-bench.sh, ...
+│   └── plot/                  matplotlib renderers: hero-cloud.py, sweep-plot.py, ...
+├── docs/
+│   ├── architecture.md        package graph, request lifecycle, metrics list
+│   ├── benchmarks.md          local reproduction recipes
+│   ├── cloud-bench.md         cloud reproduction runbook
+│   ├── results.md             local M1 numbers
+│   ├── results-cloud.md       cloud A100 numbers, per-concurrency tables
+│   ├── decisions/             8 ADRs
+│   └── images/                chart and gif assets
+├── .github/workflows/ci.yml   vet, lint, race tests, coverage gate, fuzz smoke
+├── Makefile
+├── go.mod
+└── README.md
 ```
 
 ## Limitations
-
-In rough order of impact if addressed:
 
 - **Bootstrap CIs over the per-request distribution** would replace the
   current ±1 sample-stddev error bars (computed from three seeds). With

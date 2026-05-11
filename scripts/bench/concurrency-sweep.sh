@@ -114,9 +114,9 @@ ON YOUR LAPTOP, AFTER SCP:
 
    python3 scripts/plot/sweep-plot.py \\
        --input bench-results-sweep/$short \\
-       --out docs/sweep-${short}.png
+       --out docs/images/sweep-${short}.png
 
-   git add docs/sweep-${short}.png
+   git add docs/images/sweep-${short}.png
    git commit -m "bench: concurrency sweep for $short"
    git push
 

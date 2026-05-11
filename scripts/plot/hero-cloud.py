@@ -28,21 +28,25 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 
+# Color hierarchy reads as: prefix-aware = winner (vivid teal),
+# least-loaded = competitive runner-up (amber), round-robin = neutral
+# baseline (slate), random = obvious worst (rose). Distinct hues so the
+# eye separates winner from baselines at a glance, no red/green confusion.
 PALETTE = {
-    "roundrobin":  "#94a3b8",
-    "random":      "#cbd5e1",
-    "leastloaded": "#475569",
-    "prefixaware": "#0d9488",
+    "random":      "#f43f5e",   # rose-500: worst
+    "roundrobin":  "#64748b",   # slate-500: neutral baseline
+    "leastloaded": "#f59e0b",   # amber-500: competitive runner-up
+    "prefixaware": "#0d9488",   # teal-600: winner
 }
 LABELS = {
-    "roundrobin":  "round-robin",
     "random":      "random",
+    "roundrobin":  "round-robin",
     "leastloaded": "least-loaded",
-    "prefixaware": "prefix-aware",
+    "prefixaware": "prefix-aware (ours)",
 }
-MARKERS  = {"roundrobin": "o", "random": "s", "leastloaded": "^", "prefixaware": "D"}
-ZORDER   = {"roundrobin": 2, "random": 2, "leastloaded": 3, "prefixaware": 5}
-LINEWIDTH = {"roundrobin": 1.6, "random": 1.6, "leastloaded": 1.6, "prefixaware": 3.0}
+MARKERS   = {"random": "s", "roundrobin": "o", "leastloaded": "^", "prefixaware": "D"}
+ZORDER    = {"random": 2,   "roundrobin": 3,   "leastloaded": 4,   "prefixaware": 5}
+LINEWIDTH = {"random": 1.8, "roundrobin": 1.8, "leastloaded": 1.8, "prefixaware": 3.2}
 
 
 def apply_modern_style():

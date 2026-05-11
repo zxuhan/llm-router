@@ -2,9 +2,9 @@
 # and the router first; the script does NOT start them itself, so the
 # recording stays clean and short).
 #
-# Render: vhs bench/scripts/demo.tape  -> docs/demo.gif
+# Render: vhs scripts/bench/demo.tape  -> docs/images/demo.gif
 
-Output docs/demo.gif
+Output docs/images/demo.gif
 
 Set Shell "bash"
 Set FontSize 14
@@ -20,7 +20,7 @@ Enter
 Sleep 200ms
 Show
 
-Type "bash bench/scripts/live-demo.sh"
+Type "bash scripts/bench/live-demo.sh"
 Sleep 500ms
 Enter
 Sleep 12s

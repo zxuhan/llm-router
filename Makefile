@@ -7,7 +7,7 @@ COVER_PROFILE   ?= coverage.txt
 BIN_DIR         ?= bin
 
 .PHONY: all build test test-race cover lint vet fmt clean \
-        router replay gen-traces bench-bin up down bench help
+        router replay gen-traces bench-bin bench help
 
 all: build
 
@@ -20,11 +20,7 @@ help:
 	@echo "  lint        Run golangci-lint"
 	@echo "  vet         Run go vet"
 	@echo "  fmt         Run gofmt -s -w on all .go files"
-	@echo "  up          Start local llama.cpp workers (see scripts/up.sh)"
-	@echo "  down        Stop local workers"
-	@echo "  bench       Run benchmark harness against the router"
-	@echo "  replay      Replay a trace against a running router"
-	@echo "  gen-traces  Generate a synthetic trace"
+	@echo "  bench       Run the in-process benchmark harness"
 	@echo "  clean       Remove build artifacts"
 
 build: router replay gen-traces bench-bin
@@ -61,14 +57,8 @@ vet:
 fmt:
 	gofmt -s -w .
 
-up:
-	bash scripts/up.sh
-
-down:
-	bash scripts/down.sh
-
 bench:
-	bash bench/scripts/run.sh
+	bash scripts/bench/run.sh
 
 clean:
 	rm -rf $(BIN_DIR) $(COVER_PROFILE) coverage.html
