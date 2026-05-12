@@ -1,0 +1,28 @@
+shape: sequence_diagram
+
+Client
+Proxy: proxy.Handler
+Router: router.Router
+Tree: Tree per worker
+Backend: chosen backend
+
+Client -> Proxy: POST chat completions request
+Proxy -> Proxy: read body and extract prompt
+Proxy -> Router: Choose with prompt
+Router -> Tree: LongestMatch over chunks
+Tree -> Router: match length per backend
+Router -> Proxy: Decision with backend and reason
+
+Proxy -> Tree: Update with chosen worker
+Proxy -> Backend: Acquire then dispatch HTTP
+Backend -> Proxy: HTTP response
+Proxy -> Client: status and X-Router headers
+
+streaming body: {
+  Backend -> Proxy: SSE chunk
+  Proxy -> Client: SSE chunk via flusher
+}
+
+Backend -> Proxy: EOF
+Proxy -> Backend: Release
+Proxy -> Proxy: emit RequestStats to Recorders

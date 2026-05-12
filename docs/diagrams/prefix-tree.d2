@@ -1,0 +1,15 @@
+direction: down
+
+A: insert or longest-match
+B: root {shape: diamond}
+N1: edge a b c
+N2: edge d e
+N3: edge f
+L1: LRU {shape: cylinder}
+
+A -> B
+B -> N1: first hash
+N1 -> N2: next hash
+N1 -> N3: next hash
+N2 -> L1: terminal {style.stroke-dash: 4}
+N3 -> L1: terminal {style.stroke-dash: 4}

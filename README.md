@@ -112,37 +112,10 @@ result. Three-seed CIs, safety-valve ablation, smaller-model reference:
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    Client["Client (OpenAI SDK)"]
+![Architecture: client to llm-cache-router (proxy, strategy, per-worker trees, circuit breakers) to a pool of vLLM workers, with SSE streamed back](docs/images/architecture.svg)
 
-    Client -->|"POST chat completions"| Proxy
+<!-- source: docs/diagrams/architecture.d2 — regenerate with `make diagrams` -->
 
-    subgraph Router["llm-cache-router (Go service)"]
-        direction TB
-        Proxy["HTTP proxy<br/>SSE pass-through"]
-        Strategy["Routing strategy<br/>roundrobin · random<br/>leastloaded · prefixaware"]
-        Trees[("Per-worker radix trees<br/>LRU + chunk budget")]
-        Breaker["Per-backend<br/>circuit breakers"]
-
-        Proxy --> Strategy
-        Strategy <--> Trees
-        Breaker -.-> Strategy
-    end
-
-    Strategy -->|"chosen worker"| Pool
-
-    subgraph Pool["Backend pool"]
-        direction LR
-        W0["vLLM :18001"]
-        W1["vLLM :18002"]
-        W2["vLLM :18003"]
-        W3["vLLM :18004"]
-    end
-
-    Pool -.-> Proxy
-    Proxy -->|"SSE stream"| Client
-```
 
 Each backend has its own compressed radix tree of recently-dispatched
 prompt prefixes, hashed into 32-byte chunks. On each request the router

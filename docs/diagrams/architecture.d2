@@ -1,0 +1,27 @@
+direction: down
+
+Client: "Client (OpenAI SDK)"
+
+Router: "llm-cache-router (Go service)" {
+  Proxy: "HTTP proxy\nSSE pass-through"
+  Strategy: "Routing strategy\nroundrobin · random\nleastloaded · prefixaware"
+  Trees: "Per-worker radix trees\nLRU + chunk budget" {shape: cylinder}
+  Breaker: "Per-backend\ncircuit breakers"
+
+  Proxy -> Strategy
+  Strategy <-> Trees
+  Breaker -> Strategy {style.stroke-dash: 4}
+}
+
+Pool: "Backend pool" {
+  direction: right
+  W0: "vLLM :18001"
+  W1: "vLLM :18002"
+  W2: "vLLM :18003"
+  W3: "vLLM :18004"
+}
+
+Client -> Router.Proxy: "POST chat completions"
+Router.Strategy -> Pool: "chosen worker"
+Pool -> Router.Proxy {style.stroke-dash: 4}
+Router.Proxy -> Client: "SSE stream"

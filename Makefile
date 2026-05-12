@@ -7,7 +7,7 @@ COVER_PROFILE   ?= coverage.txt
 BIN_DIR         ?= bin
 
 .PHONY: all build test test-race cover lint vet fmt clean \
-        router replay gen-traces bench-bin bench help
+        router replay gen-traces bench-bin bench help diagrams
 
 all: build
 
@@ -21,6 +21,7 @@ help:
 	@echo "  vet         Run go vet"
 	@echo "  fmt         Run gofmt -s -w on all .go files"
 	@echo "  bench       Run the in-process benchmark harness"
+	@echo "  diagrams    Render docs/diagrams/*.d2 to docs/images/*.svg (requires d2)"
 	@echo "  clean       Remove build artifacts"
 
 build: router replay gen-traces bench-bin
@@ -59,6 +60,14 @@ fmt:
 
 bench:
 	bash scripts/bench/run.sh
+
+DIAGRAM_SRC := $(wildcard docs/diagrams/*.d2)
+DIAGRAM_OUT := $(patsubst docs/diagrams/%.d2,docs/images/%.svg,$(DIAGRAM_SRC))
+
+diagrams: $(DIAGRAM_OUT)
+
+docs/images/%.svg: docs/diagrams/%.d2
+	d2 $< $@
 
 clean:
 	rm -rf $(BIN_DIR) $(COVER_PROFILE) coverage.html

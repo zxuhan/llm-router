@@ -55,34 +55,10 @@ glues these together.
 
 ## Request lifecycle
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant Proxy as proxy.Handler
-    participant Router as router.Router
-    participant Tree as Tree per worker
-    participant Backend as chosen backend
+![Request lifecycle: client to proxy to router to tree to backend, with streaming SSE response](images/request-lifecycle.svg)
 
-    Client->>Proxy: POST chat completions request
-    Proxy->>Proxy: read body and extract prompt
-    Proxy->>Router: Choose with prompt
-    Router->>Tree: LongestMatch over chunks
-    Tree-->>Router: match length per backend
-    Router-->>Proxy: Decision with backend and reason
+<!-- source: docs/diagrams/request-lifecycle.d2 — regenerate with `make diagrams` -->
 
-    Proxy->>Tree: Update with chosen worker
-    Proxy->>Backend: Acquire then dispatch HTTP
-    Backend-->>Proxy: HTTP response
-    Proxy-->>Client: status and X-Router headers
-    loop streaming body
-        Backend-->>Proxy: SSE chunk
-        Proxy-->>Client: SSE chunk via flusher
-    end
-    Backend-->>Proxy: EOF
-    Proxy->>Backend: Release
-    Proxy->>Proxy: emit RequestStats to Recorders
-```
 
 The two important properties to notice:
 
@@ -121,15 +97,10 @@ The tree supports:
   `MaxChunks`, the oldest terminal is evicted and dead branches are pruned
   upward.
 
-```mermaid
-flowchart TD
-    A["insert or longest-match"] --> B{root}
-    B -->|first hash| N1["edge a b c"]
-    N1 -->|next hash| N2["edge d e"]
-    N1 -->|next hash| N3["edge f"]
-    N2 -.terminal.-> L1[(LRU)]
-    N3 -.terminal.-> L1
-```
+![Prefix tree: insert or longest-match walks the radix tree; terminal nodes attach to a shared LRU](images/prefix-tree.svg)
+
+<!-- source: docs/diagrams/prefix-tree.d2 — regenerate with `make diagrams` -->
+
 
 ## The routing strategies
 
