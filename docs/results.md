@@ -29,40 +29,36 @@ all 54 samples per strategy.
 
 | Strategy | Hit rate | KV cached | TTFT p50 | TTFT p95 | RPS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| roundrobin   |  0.00% | 58.21 ± 1.45% | 2.59 s ± 575 ms | 11.09 s ± 230 ms | 1.24 ± 0.10 |
-| random       |  0.00% | 59.13 ± 3.54% | 4.24 s ± 581 ms |  9.81 s ± 1.49 s | 1.16 ± 0.14 |
-| leastloaded  |  0.00% | 63.34 ± 0.34% | 1.27 s ± 478 ms |  9.74 s ± 432 ms | 1.50 ± 0.05 |
-| **prefixaware** | **94.44%** | **74.99 ± 1.24%** | 3.91 s ± 332 ms | **6.85 s ± 253 ms** | 1.25 ± 0.09 |
+| roundrobin   |  0.00% | 57.56 ± 0.17% | 2.01 s ± 501 ms | 8.21 s ± 537 ms | 1.67 ± 0.05 |
+| random       |  0.00% | 62.34 ± 2.22% | 1.70 s ± 461 ms | 8.06 s ± 921 ms | 1.84 ± 0.15 |
+| leastloaded  |  0.00% | 61.94 ± 0.75% | 0.82 s ± 175 ms | 8.29 s ± 420 ms | 1.85 ± 0.08 |
+| **prefixaware** | **94.44%** | **75.00 ± 1.12%** | 2.10 s ± 155 ms | **3.70 s ± 123 ms** | 2.36 ± 0.13 |
 
 **Headline numbers:**
 
-- **p95 TTFT cut by ~30% vs the best baseline (least-loaded)**, ~38% vs
-  round-robin (mean 6.85 s vs 11.09 s).
-- **Stddev on p95 is ~2-6x tighter for PA** (253 ms vs 230-1490 ms across
-  oblivious strategies). PA is not just faster on average, it is
-  *predictable*. Production SLOs care about that.
-- **Upstream KV-cache hit rate** lifted from ~58-63% to **~75%** by
+- **p95 TTFT cut by ~55% vs the best baseline (least-loaded)**, ~55%
+  vs round-robin too (mean 3.70 s vs 8.21-8.29 s).
+- **Stddev on p95 is 3-8x tighter for PA** (123 ms vs 420-921 ms across
+  the three baselines). PA is the tightest p95 stddev of the four
+  strategies; production SLOs care about that.
+- **Upstream KV-cache hit rate** lifted from ~58-62% to **~75%** by
   routing decisions alone.
-- **p50 TTFT is *not* improved by PA** in this regime: cold first-time
-  prefills still happen on the warming worker, and least-loaded
-  parallelises those across 3 workers and wins p50. The win is at the
-  tail and on cumulative throughput.
-
-PA's p50 is *not* improved; cold first-time prefills still happen on
-the warming worker, and `leastloaded` parallelises those across three
-workers and wins p50. The algorithm's win is at the tail and on
-cumulative throughput.
+- **p50 TTFT is the worst of the four for PA**: 2.10 s vs 0.82 s for
+  `leastloaded`. Pinning queues subsequent requests on the same worker
+  while `leastloaded` parallelises cold prefills across three workers.
+  The win is at the tail and on throughput (PA RPS 2.36 vs baselines
+  1.67-1.85), not at p50.
 
 ### Per-run detail
 
-Confirms the variance story: PA's p95 sits in [6.60, 7.10] s across the
-three runs (a tight window); the oblivious strategies span 5.3-11.3 s.
+PA's p95 sits in [3.62, 3.84] s across the three seeds (a 220 ms
+window); the three baselines span 7.31-9.09 s.
 
 | Run | RR p95 | Random p95 | LL p95 | **PA p95** |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 (seed 17) | 11.06 s |  8.08 s | 10.02 s | **6.60 s** |
-| 2 (seed 18) | 10.87 s | 10.64 s |  9.24 s | **6.85 s** |
-| 3 (seed 19) | 11.33 s | 10.70 s |  9.95 s | **7.10 s** |
+| 1 (seed 17) |  7.81 s |  7.31 s |  7.81 s | **3.62 s** |
+| 2 (seed 18) |  8.00 s |  9.09 s |  8.43 s | **3.63 s** |
+| 3 (seed 19) |  8.82 s |  7.77 s |  8.62 s | **3.84 s** |
 
 ---
 
@@ -198,9 +194,10 @@ prefix state; this is the well-defined floor of the harness.
 
 Per-request prefill time is roughly `prompt_tokens × per_token_prefill_time`;
 the only thing the router can change is the fraction of those tokens
-already cached upstream. Our measurement shows the prefix-aware strategy
-lifts that fraction from ~59% to ~75% on identical traffic, a
-~16 percentage-point lift that comes from routing decisions, not hardware.
+already cached upstream. Our measurement shows prefix-aware lifts that
+fraction from ~58-62% (baselines) to ~75% on identical traffic, a
+13 percentage-point lift over `leastloaded` (the strongest baseline)
+that comes from routing decisions, not hardware.
 
 Concrete back-of-envelope:
 
@@ -209,9 +206,10 @@ Concrete back-of-envelope:
   ~125 ms. **Per-request savings ~375 ms (~75% reduction at the
   prefill stage).**
 - For our M1 Pro / 1.5 B run, the cached-tokens math predicts ~1.5 s
-  saved per request; we *measure* ~4 s of mean p95 reduction. The
-  measured win is larger because warm workers also benefit from shorter
-  queues and better decode-time locality on top of the prefill saving.
+  saved per request; we *measure* ~4.6 s of mean p95 reduction
+  (8.29 s LL vs 3.70 s PA). The measured win exceeds the prefill-only
+  estimate because warm workers also benefit from shorter queues and
+  better decode-time locality on top of the prefill saving.
 
 The router's win does not depend on model size. The *value* of that win
 does scale: bigger models mean bigger absolute savings, which is the

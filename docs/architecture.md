@@ -12,17 +12,18 @@ quickstart, this document explains how the system is put together.
    /v1/chat/completions |  - prompt extract   |
                         |  - strategy.Choose  | --HTTP/SSE--> worker B (llama.cpp)
                         |  - tree.Update      |
-                        |  - SSE pass-through | --HTTP/SSE--> worker C (mlx-lm.server)
+                        |  - SSE pass-through | --HTTP/SSE--> worker C (vLLM)
                         +---------------------+
                                  |
                                  +-- /metrics  (prometheus)
                                  +-- /healthz
 ```
 
-The router speaks the OpenAI `/v1/chat/completions` API to clients and the
-same wire format upstream. Any backend that ships an OpenAI-compatible
-endpoint can stand in: llama.cpp's built-in server, mlx-lm.server, vLLM,
-text-generation-inference, etc.
+The router speaks the OpenAI `/v1/chat/completions` API to clients and
+forwards the same wire format upstream. Verified upstream backends are
+**llama.cpp** (local M1 bench) and **vLLM 0.6.4** (4× A100 cloud bench);
+any other server that implements the same endpoint should work without
+code changes, but only the two above have measured numbers in this repo.
 
 ## Package layout
 

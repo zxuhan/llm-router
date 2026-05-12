@@ -84,17 +84,19 @@ for determinism. Production seeds from `time.Now().UnixNano()`.
 ## Validation
 
 The cloud concurrency sweep (4× A100, Qwen2.5-7B and Qwen2.5-14B,
-SESSIONS=4..24) shows PA's TTFT slope is now 2-3× gentler than every
-baseline at both model sizes:
+SESSIONS=4..24) shows PA now has the gentlest TTFT slope at both model
+sizes:
 
 | Strategy | 7B slope | 14B slope |
 | :--- | ---: | ---: |
 | Random          | +49 ms | +98 ms |
 | Round-robin     | +31 ms | +36 ms |
-| Least-loaded    | +36 ms | +49 ms |
+| Least-loaded    | +35 ms | +50 ms |
 | **Prefix-aware (fixed)** | **+16 ms** | **+25 ms** |
 
-Full data: [docs/results-cloud.md](../results-cloud.md).
+Slope ratios relative to PA: random 3.0× (7B) / 3.9× (14B); least-loaded
+2.2× / 2.0×; round-robin 1.9× / 1.4×. Full data:
+[docs/results-cloud.md](../results-cloud.md).
 
 ## Alternatives considered
 
@@ -112,4 +114,4 @@ Full data: [docs/results-cloud.md](../results-cloud.md).
   randomized-tie + safety-valve combo was sufficient to flip the cloud
   result.
 - **Dynamic `saturation_inflight` based on observed P95 latency per
-  worker.** The honest next step. Listed in README's Future work.
+  worker.** The honest next step. Listed in README's Limitations.

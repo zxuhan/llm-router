@@ -19,45 +19,6 @@
 
 </div>
 
-## Quickstart
-
-Two paths: a 15-minute local run on a Mac with no GPU, and a 3.5-hour
-cloud run that produces the chart above.
-
-**Local** (Apple Silicon, llama.cpp, Qwen2.5-1.5B):
-
-```bash
-brew install llama.cpp
-
-mkdir -p models
-curl -L -o models/qwen2.5-1.5b.gguf \
-  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
-
-make build
-MODEL=models/qwen2.5-1.5b.gguf WORKER_PORTS="8001 8002 8003" \
-  RUNS=3 SESSIONS=6 TURNS=3 SYS_LEN=2048 SEED=17 \
-  bash scripts/bench/real-llm.sh
-
-cat bench/results/real.md
-```
-
-Knobs and ablations: [`docs/benchmarks.md`](docs/benchmarks.md). Full
-results: [`docs/results.md`](docs/results.md).
-
-**Cloud** (RunPod 4× A100 80GB SXM, vLLM, Qwen2.5):
-
-```bash
-git clone https://github.com/zxuhan/llm-router.git
-cd llm-router
-bash scripts/install-cloud.sh
-tmux new -s bench
-bash scripts/bench/full-bench.sh
-# detach Ctrl+b d, reattach: tmux attach -t bench
-```
-
-Pod sizing, scp recipe, preempt recovery, terminate-vs-stop billing
-trap: [`docs/cloud-bench.md`](docs/cloud-bench.md).
-
 ## Performance
 
 The hero chart above is the cloud sweep. Numbers below are mean ±
@@ -73,13 +34,14 @@ stddev across three seeds at each concurrency point. Trace shape: 4 to
 
 | Strategy | 7B slope | 14B slope |
 | :--- | ---: | ---: |
-| random            | +49 ms (97 to 146 ms) | +98 ms (167 to 265 ms) |
-| round-robin       | +31 ms (84 to 115 ms) | +36 ms (157 to 193 ms) |
-| least-loaded      | +36 ms (66 to 102 ms) | +49 ms (122 to 171 ms) |
+| random            | +49 ms (98 to 146 ms) | +98 ms (167 to 265 ms) |
+| round-robin       | +31 ms (84 to 115 ms) | +36 ms (157 to 194 ms) |
+| least-loaded      | +35 ms (67 to 102 ms) | +50 ms (122 to 172 ms) |
 | **prefix-aware**  | **+16 ms (83 to 99 ms)** | **+25 ms (141 to 166 ms)** |
 
-Prefix-aware degrades 2 to 3 times more gently than every baseline at
-both model sizes. Same shape; absolute magnitudes scale with prefill cost.
+Prefix-aware has the gentlest slope on both model sizes. Slope ratios
+relative to PA: random 3.0× (7B) / 3.9× (14B); least-loaded 2.2× / 2.0×;
+round-robin 1.9× / 1.4×.
 
 ### Production-shape point (sessions=24, 14B, six sessions per worker)
 
@@ -88,29 +50,34 @@ both model sizes. Same shape; absolute magnitudes scale with prefill cost.
 | roundrobin   | 91.10% | 193 ms | 2.40 s | 2.72 s | 25.2 |
 | random       | 90.69% | 265 ms | 2.36 s | 2.74 s | 23.4 |
 | leastloaded  | 94.22% | 171 ms | 2.12 s | 2.29 s | 27.6 |
-| **prefixaware** | **94.88%** | **166 ms** | **2.13 s** | **2.25 s** | 26.8 |
+| **prefixaware** | **94.88%** | **166 ms** | 2.13 s | **2.25 s** | 26.8 |
 
-Prefix-aware wins p50 by 14% over round-robin and 37% over random with
-the lowest p99. Upstream KV cache hit rate stays at 94 to 95% across
-every concurrency point on every model size; baselines drift between 80
-and 95%.
+Prefix-aware wins p50 by 14% over round-robin and 37% over random, with
+the tightest p99 (2.25 s vs 2.29-2.74 s across baselines; 2% lower than
+the next-best). Upstream KV cache hit rate stays at 94-95% across every
+concurrency point on both model sizes; baselines drift between 80% and
+95% with load.
 
 ### Where prefix-aware does not win
 
-At one session per worker (`sessions=4`), `leastloaded` beats
-prefix-aware by 17 to 19 ms on both models:
+Per-point p50 comparison between PA and the best baseline (always
+least-loaded on this trace):
 
-| Model | LL p50 | PA p50 | gap |
-| :--- | ---: | ---: | ---: |
-| Qwen2.5-7B  |  66 ms |  83 ms | LL +17 ms |
-| Qwen2.5-14B | 122 ms | 141 ms | LL +19 ms |
+| sessions | 7B PA / LL p50 | winner | 14B PA / LL p50 | winner |
+| ---: | :--- | :--- | :--- | :--- |
+|  4 | 83 / 67 ms  | **LL +16 ms** | 141 / 122 ms | **LL +19 ms** |
+|  8 | 84 / 75 ms  | **LL +9 ms**  | 140 / 132 ms | **LL +8 ms** |
+| 12 | 94 / 87 ms  | **LL +7 ms**  | 141 / 140 ms | tied |
+| 16 | 87 / 88 ms  | PA +1 ms      | 148 / 152 ms | **PA +4 ms** |
+| 24 | 99 / 102 ms | **PA +3 ms**  | 166 / 172 ms | **PA +5 ms** |
 
-With one session per worker, `leastloaded` accidentally distributes one
-session per worker; the second turn naturally lands on the worker that
-already cached turn one, so there is no need for prefix-aware logic. The
-strategy's stricter pinning adds router overhead with no marginal benefit
-at this regime. The crossover is around `sessions = N_workers + 1`;
-below it, cheap baselines suffice; above it, prefix-aware leads.
+PA's per-point p50 wins start at sessions=16 (4× the worker count), not
+at sessions=`N_workers + 1`. Below that, `leastloaded` accidentally
+distributes one session per worker and the second turn naturally lands
+on the worker that cached turn one, so PA's stricter pinning adds
+router overhead without marginal benefit. PA's value across the whole
+range is the **flat slope** (see the headline table); the per-point p50
+gap only opens up at high concurrency.
 
 > [!IMPORTANT]
 > The benchmark is a single trace pattern (multi-turn conversations with
@@ -125,21 +92,23 @@ and caveats: [`docs/results-cloud.md`](docs/results-cloud.md).
 
 ### Local validation: same algorithm, smaller scale
 
-Before the cloud run, the same Go code was validated on an M1 Pro
-against three `llama-server` workers serving Qwen2.5-1.5B (Q4_K_M):
+The same Go code was validated on an M1 Pro against three `llama-server`
+workers serving Qwen2.5-1.5B (Q4_K_M), three seeds, 18 requests each:
 
-| Strategy | KV cached | TTFT p50 | TTFT p95 |
-| :--- | ---: | ---: | ---: |
-| roundrobin     | 58.21% | 2.59 s | 11.09 s |
-| random         | 59.13% | 4.24 s |  9.81 s |
-| leastloaded    | 63.34% | 1.27 s |  9.74 s |
-| **prefixaware** | **74.99%** | 3.91 s | **6.85 s** |
+| Strategy | KV cached | TTFT p50 | TTFT p95 | RPS |
+| :--- | ---: | ---: | ---: | ---: |
+| roundrobin     | 57.56% | 2.01 s | 8.21 s | 1.67 |
+| random         | 62.34% | 1.70 s | 8.06 s | 1.84 |
+| leastloaded    | 61.94% | **0.82 s** | 8.29 s | 1.85 |
+| **prefixaware** | **75.00%** | 2.10 s | **3.70 s** | **2.36** |
 
-Prefix-aware lifts the upstream cache hit rate by ~16 percentage points
-and cuts p95 TTFT by 30% versus the best baseline. Same effect at 1.5B
-on a laptop and at 14B on four A100s; the routing layer is the same code
-either way. Three-seed CIs, safety-valve ablation, and the smaller-model
-reference: [`docs/results.md`](docs/results.md).
+vs `leastloaded` (best baseline): +13.1 pp cache hit, **55% lower p95
+TTFT**, 28% higher throughput. p50 favors `leastloaded` (0.82 s vs PA's
+2.10 s) because PA pins subsequent requests onto the same worker
+serially while `leastloaded` parallelises cold prefills across three.
+The win is at the tail and on throughput, same shape as the cloud
+result. Three-seed CIs, safety-valve ablation, smaller-model reference:
+[`docs/results.md`](docs/results.md).
 
 ## Architecture
 
@@ -189,11 +158,62 @@ via `X-Router-Backend` and `X-Router-Reason` response headers.
 | `leastloaded` | minimum in-flight count |
 | `prefixaware` | longest prefix match across per-worker trees, ties broken by random shuffle, with a saturation valve that spills off any worker above `inflight ≥ saturation_inflight` |
 
+### Relation to engine-level prefix caching (SGLang, vLLM)
+
+SGLang's RadixAttention and vLLM's `--enable-prefix-caching` solve the
+same problem one layer down: inside a single inference engine, sharing
+cached prefixes across requests that the engine already received.
+`llm-cache-router` solves it one layer up: deciding which of N
+independent engine instances a request reaches in the first place, so
+the request lands on the worker that already holds its prefix. The two
+layers compose; run vLLM (or SGLang) behind this router and you get
+both intra-engine prefix reuse and inter-worker cache locality, with
+neither layer needing to know the other exists.
+
 Package layout, request lifecycle diagram, and the full list of emitted
 Prometheus metrics: [`docs/architecture.md`](docs/architecture.md).
 Eight ADRs covering language choice, backend abstraction, prefix tree
 design, LRU eviction, the safety valve, tokenization, the circuit
 breaker, and tie-break randomization: [`docs/decisions/`](docs/decisions/).
+
+## Quickstart
+
+Two paths: a 15-minute local run on a Mac with no GPU, and a 3.5-hour
+cloud run that produces the chart above.
+
+**Local** (Apple Silicon, llama.cpp, Qwen2.5-1.5B):
+
+```bash
+brew install llama.cpp
+
+mkdir -p models
+curl -L -o models/qwen2.5-1.5b.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+
+make build
+MODEL=models/qwen2.5-1.5b.gguf WORKER_PORTS="8001 8002 8003" \
+  RUNS=3 SESSIONS=6 TURNS=3 SYS_LEN=2048 SEED=17 \
+  bash scripts/bench/real-llm.sh
+
+cat bench/results/real.md
+```
+
+Knobs and ablations: [`docs/benchmarks.md`](docs/benchmarks.md). Full
+results: [`docs/results.md`](docs/results.md).
+
+**Cloud** (RunPod 4× A100 80GB SXM, vLLM, Qwen2.5):
+
+```bash
+git clone https://github.com/zxuhan/llm-router.git
+cd llm-router
+bash scripts/install-cloud.sh
+tmux new -s bench
+bash scripts/bench/full-bench.sh
+# detach Ctrl+b d, reattach: tmux attach -t bench
+```
+
+Pod sizing, scp recipe, preempt recovery, terminate-vs-stop billing
+trap: [`docs/cloud-bench.md`](docs/cloud-bench.md).
 
 ## Project structure
 
@@ -234,10 +254,11 @@ breaker, and tie-break randomization: [`docs/decisions/`](docs/decisions/).
 - **Auto-tuned `saturation_inflight`** based on observed per-worker p95
   latency would remove the only routing knob that needs manual setting
   per workload. Today's default of four is calibrated for our trace shape.
-- **SGLang RadixAttention as an upstream baseline.** The current bench
-  compares four routing strategies against the same vLLM upstream. A
-  comparison against SGLang's engine-level cache-aware scheduling would
-  separate the routing-layer contribution from the engine-layer one.
+- **SGLang as the upstream engine.** The Architecture section explains
+  the composition; the cloud bench has not yet measured the layered
+  combination of `llm-cache-router` + SGLang behind it. Doing so would
+  quantify how much extra latency comes off when intra-engine and
+  inter-worker cache locality are stacked.
 - **Multi-trace bench.** The current trace is one shape; real production
   mixes single-turn, RAG, and branching tool loops.
 - **Half-open one-probe circuit breaker.** Today's breaker is closed and

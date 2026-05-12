@@ -9,8 +9,8 @@ This document describes how to reproduce the comparison numbers in
    rate* differences here reflect the algorithm exactly, since every
    backend is identical.
 2. **`cmd/replay` plus a real router instance** for benchmarks against a
-   live llama.cpp / mlx-lm fleet. This is the path that produces real TTFT
-   numbers on your hardware.
+   live `llama-server` fleet (local) or a vLLM fleet (cloud). This is the
+   path that produces real TTFT numbers on your hardware.
 
 ## In-process benchmark (recommended for the hit-rate comparison)
 

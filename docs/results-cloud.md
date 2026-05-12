@@ -31,11 +31,13 @@ per worker" (sessions=24)?
 | :--- | ---: | ---: |
 | Random           | +49 ms | +98 ms |
 | Round-robin      | +31 ms | +36 ms |
-| Least-loaded     | +36 ms | +49 ms |
+| Least-loaded     | +35 ms | +50 ms |
 | **Prefix-aware** | **+16 ms** | **+25 ms** |
 
-Prefix-aware's slope is **2-3× gentler at both model sizes**. This is the
-production-grade SLA property: predictable latency as traffic grows.
+Prefix-aware has the gentlest slope on both model sizes. Slope ratios
+relative to PA: random 3.0× (7B) / 3.9× (14B); least-loaded 2.2× / 2.0×;
+round-robin 1.9× / 1.4×. Predictable latency under load is the
+production-grade SLA property.
 
 ![Concurrency sweep at Qwen2.5-7B and Qwen2.5-14B on 4× A100. PA stays flat under load; baselines climb 2-3× faster.](images/hero-cloud.png)
 
@@ -153,7 +155,7 @@ the spilling is what kept TTFT in the lead.)
 
 2. **PA's TTFT slope is the gentlest** (see headline table above). At 14B, PA grows by 25 ms across 6× concurrency increase; random grows by 98 ms. **PA's predictability under load is its production value.**
 
-3. **PA wins at concurrency ≥ 16 (one session per worker is the crossover).** At sessions=16: PA wins p50 vs RR by 8% (7B) and 13% (14B). At sessions=24: 14% (7B) and 14% (14B) over RR; 32-37% over random.
+3. **PA's per-point p50 wins start at sessions=16** (four sessions per worker; the crossover sits between sessions=12 and sessions=16). At sessions=16: PA beats round-robin on p50 by 8% (7B) and 13% (14B). At sessions=24: 14% over round-robin at both model sizes, 32-37% over random.
 
 4. **Same shape at 7B and 14B** proves the algorithm, not the model.
 
@@ -193,7 +195,7 @@ After SCP back to the laptop:
 
 ```bash
 /tmp/plot-venv/bin/python scripts/plot/hero-cloud.py \
-  --left  bench-results-sweep-7B/qwen2.5-7b   --left-title  "Qwen2.5-7B" \
-  --right bench-results-sweep-14B/qwen2.5-14b --right-title "Qwen2.5-14B" \
+  --top    bench-results-sweep-7B/qwen2.5-7b   --top-title    "Qwen2.5-7B" \
+  --bottom bench-results-sweep-14B/qwen2.5-14b --bottom-title "Qwen2.5-14B" \
   --out docs/images/hero-cloud.png
 ```
