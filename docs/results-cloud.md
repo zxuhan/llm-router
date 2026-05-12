@@ -37,7 +37,7 @@ per worker" (sessions=24)?
 Prefix-aware's slope is **2-3× gentler at both model sizes**. This is the
 production-grade SLA property: predictable latency as traffic grows.
 
-![Concurrency sweep at Qwen2.5-7B and Qwen2.5-14B on 4× A100. PA stays flat under load; baselines climb 2-3× faster.](hero-cloud.png)
+![Concurrency sweep at Qwen2.5-7B and Qwen2.5-14B on 4× A100. PA stays flat under load; baselines climb 2-3× faster.](images/hero-cloud.png)
 
 ## Per-concurrency tables
 

@@ -327,12 +327,13 @@ PRE-FLIGHT CHECKS (do all THREE before terminating):
 
 ON YOUR LAPTOP, AFTER SCP:
 
-   python3 scripts/plot/hero.py  --input bench-results-cloud --out docs/images/hero-cloud.png
-   python3 scripts/plot/plot.py  --input bench-results-cloud --out docs/images/cdf-cloud.png
+   # cloud-vllm.sh writes ONE concurrency point. The README hero chart
+   # is produced by full-bench.sh's matrix sweep; if that's what you're
+   # after, see docs/cloud-bench.md step 6 instead. The line below is
+   # only useful for ad-hoc one-point spot checks.
    cp bench-results-cloud/real.md docs/results-cloud.md
-
-   git add docs/images/hero-cloud.png docs/images/cdf-cloud.png docs/results-cloud.md
-   git commit -m "bench: cloud results on ${N_WORKERS}× GPU + vLLM + ${SERVED_MODEL_NAME}"
+   git add docs/results-cloud.md
+   git commit -m "bench: cloud point on ${N_WORKERS}× GPU + vLLM + ${SERVED_MODEL_NAME}"
    git push
 
 THEN terminate the pod:

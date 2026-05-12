@@ -25,7 +25,7 @@ recipe.
 boot of all three workers so KV caches start empty. The CDF below pools
 all 54 samples per strategy.
 
-![Pooled latency CDF, 3 runs of N=18 each, fresh workers per run](cdf.png)
+![Pooled latency CDF, 3 runs of N=18 each, fresh workers per run](images/cdf.png)
 
 | Strategy | Hit rate | KV cached | TTFT p50 | TTFT p95 | RPS |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -263,5 +263,5 @@ accordingly.
 ## References
 
 - SGLang RadixAttention: https://arxiv.org/abs/2312.07104
-- vLLM automatic prefix caching: https://docs.vllm.ai/en/latest/automatic_prefix_caching/apc.html
-- llama.cpp server prompt cache: https://github.com/ggerganov/llama.cpp/tree/master/examples/server
+- vLLM automatic prefix caching: https://docs.vllm.ai/en/latest/features/automatic_prefix_caching.html
+- llama.cpp server prompt cache: https://github.com/ggerganov/llama.cpp/tree/master/tools/server

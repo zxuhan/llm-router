@@ -174,5 +174,5 @@ is not the bottleneck.
 ## Useful reading
 
 - SGLang's RadixAttention: https://arxiv.org/abs/2312.07104
-- vLLM prefix caching documentation: https://docs.vllm.ai/en/latest/automatic_prefix_caching/apc.html
-- llama.cpp `prompt-cache` docs: https://github.com/ggerganov/llama.cpp/tree/master/examples/server
+- vLLM prefix caching documentation: https://docs.vllm.ai/en/latest/features/automatic_prefix_caching.html
+- llama.cpp `prompt-cache` docs: https://github.com/ggerganov/llama.cpp/tree/master/tools/server
