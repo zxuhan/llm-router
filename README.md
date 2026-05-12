@@ -11,7 +11,7 @@
 </p>
 
 <p>
-  <strong>Cache-aware load balancer for OpenAI-compatible LLM servers, in Go.</strong><br/>
+  <strong>Cache-aware router for OpenAI-compatible LLM servers, in Go.</strong><br/>
   Routes each request to the worker that already holds its prefix in KV cache, so prefill runs once per shared prefix instead of once per worker. Validated locally with llama.cpp + Qwen2.5-1.5B, then run on 4× A100 80GB SXM with vLLM 0.6.4 + Qwen2.5-{7B,14B}. Cloud reproduction cost: ~$25.
 </p>
 
@@ -52,11 +52,12 @@ round-robin 1.9× / 1.4×.
 | leastloaded  | 94.22% | 171 ms | 2.12 s | 2.29 s | 27.6 |
 | **prefixaware** | **94.88%** | **166 ms** | 2.13 s | **2.25 s** | 26.8 |
 
-Prefix-aware wins p50 by 14% over round-robin and 37% over random, with
-the tightest p99 (2.25 s vs 2.29-2.74 s across baselines; 2% lower than
-the next-best). Upstream KV cache hit rate stays at 94-95% across every
-concurrency point on both model sizes; baselines drift between 80% and
-95% with load.
+Prefix-aware wins p50 by 3% over the best baseline (`leastloaded`), 14%
+over round-robin, and 37% over random; p95 is essentially tied with
+`leastloaded` (2.13 s vs 2.12 s); p99 is the tightest of the four
+(2.25 s vs 2.29 s LL, 2.72-2.74 s RR/random). Upstream KV cache hit rate
+stays at 94-95% across every concurrency point on both model sizes;
+baselines drift between 80% and 95% with load.
 
 ### Where prefix-aware does not win
 
@@ -226,7 +227,8 @@ trap: [`docs/cloud-bench.md`](docs/cloud-bench.md).
   calculation.
 - **Auto-tuned `saturation_inflight`** based on observed per-worker p95
   latency would remove the only routing knob that needs manual setting
-  per workload. Today's default of four is calibrated for our trace shape.
+  per workload. The shipped default is eight; the cloud bench overrides
+  it to four, calibrated for that trace shape.
 - **SGLang as the upstream engine.** The Architecture section explains
   the composition; the cloud bench has not yet measured the layered
   combination of `llm-cache-router` + SGLang behind it. Doing so would

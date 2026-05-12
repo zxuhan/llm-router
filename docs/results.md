@@ -195,9 +195,10 @@ prefix state; this is the well-defined floor of the harness.
 Per-request prefill time is roughly `prompt_tokens × per_token_prefill_time`;
 the only thing the router can change is the fraction of those tokens
 already cached upstream. Our measurement shows prefix-aware lifts that
-fraction from ~58-62% (baselines) to ~75% on identical traffic, a
-13 percentage-point lift over `leastloaded` (the strongest baseline)
-that comes from routing decisions, not hardware.
+fraction from ~58-62% (baselines, with `random` and `leastloaded`
+essentially tied at the top of that range) to ~75% on identical traffic,
+a 13 percentage-point lift over `leastloaded` that comes from routing
+decisions, not hardware.
 
 Concrete back-of-envelope:
 

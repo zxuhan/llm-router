@@ -151,7 +151,7 @@ the spilling is what kept TTFT in the lead.)
 
 ## What the data shows
 
-1. **PA's KV cache rate is the rock-solid 94% across ALL concurrency at BOTH model sizes.** Other strategies climb from 80% → 95% as load grows (incidental hits). Only PA holds 94% from sessions=4 to sessions=24. The router is making correct decisions regardless of load.
+1. **PA's KV cache rate is the rock-solid 94% across ALL concurrency at BOTH model sizes.** Other strategies climb from 80% → ~94% as load grows (incidental hits; the strongest baseline tops out at 94.60% on 7B and 94.22% on 14B). Only PA holds 94% from sessions=4 to sessions=24. The router is making correct decisions regardless of load.
 
 2. **PA's TTFT slope is the gentlest** (see headline table above). At 14B, PA grows by 25 ms across 6× concurrency increase; random grows by 98 ms. **PA's predictability under load is its production value.**
 
