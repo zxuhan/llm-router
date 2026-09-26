@@ -254,9 +254,11 @@ func streamResponse(w http.ResponseWriter, r io.Reader, start time.Time) (int64,
 func DefaultExtractor(body []byte) (string, error) {
 	var req struct {
 		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-			Name    string `json:"name,omitempty"`
+			Role       string          `json:"role"`
+			Content    json.RawMessage `json:"content"`
+			Name       string          `json:"name,omitempty"`
+			ToolCallID string          `json:"tool_call_id,omitempty"`
+			ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
 		} `json:"messages"`
 		// Tools and tool_calls are folded in as raw JSON below.
 		Tools     json.RawMessage `json:"tools,omitempty"`
@@ -279,8 +281,17 @@ func DefaultExtractor(body []byte) (string, error) {
 			sb.WriteString(m.Name)
 			sb.WriteByte(']')
 		}
+		if m.ToolCallID != "" {
+			sb.WriteByte('<')
+			sb.WriteString(m.ToolCallID)
+			sb.WriteByte('>')
+		}
 		sb.WriteString(":")
-		sb.WriteString(m.Content)
+		sb.WriteString(contentKey(m.Content))
+		if len(m.ToolCalls) > 0 {
+			sb.WriteString("|tool_calls:")
+			sb.WriteString(compactJSON(m.ToolCalls))
+		}
 		sb.WriteString("\n")
 	}
 	return sb.String(), nil
