@@ -99,6 +99,7 @@ func run(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/chat/completions", handler)
+	mux.Handle("/v1/models", newModelPassthrough(backends, logger))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
